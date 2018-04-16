@@ -4,10 +4,14 @@
 #include <vector>
 #include <map>
 
+#include <cstring>
+
 #include "vulkan.h"
 
-#ifdef _WIN32
-// Platform supported
+#if defined(_WIN32)
+// Windows supported
+#elif defined(__linux__)
+// Linux supported
 #else
 #error Platform not supported.
 #endif
@@ -76,8 +80,10 @@ void create_instance(VkInstance* instance)
     vector<const char*> extensions;
 
     extensions.push_back("VK_KHR_surface");
-#ifdef WIN32
+#if defined(WIN32)
     extensions.push_back("VK_KHR_win32_surface");
+#elif defined(__linux__)
+    extensions.push_back("VK_KHR_xcb_surface");
 #endif
 
     VkApplicationInfo app_info = {};
@@ -325,7 +331,7 @@ void vulkan_cleanup()
 #endif
 }
 
-void main(int argc, char **argv)
+int main(int argc, char **argv)
 {
     vulkan_init();
 
