@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <memory>
 #include <vector>
+#include <map>
 
 #include "vulkan.h"
 
@@ -17,20 +18,26 @@ using namespace std;
 
 VkInstance instance;
 VkPhysicalDevice physical_device;
+const uint32_t NO_QUEUE_FAMILY = 0xffffffff;
+uint32_t preferred_queue_family = NO_QUEUE_FAMILY;
 VkDevice device;
-
-#if 0
+VkPhysicalDeviceMemoryProperties memory_properties;
 
 struct vertex {
     float v[3];
     float c[3];
 };
 
-VkDeviceMemory vertex_memory;
-VkBuffer vertex_buffer;
+struct buffer {
+    VkDeviceMemory mem;
+    VkBuffer buf;
+};
 
-VkDeviceMemory index_memory;
-VkBuffer index_buffer;
+buffer vertex_buffer;
+
+buffer index_buffer;
+
+#if 0
 
 VkDeviceMemory vs_uniform_block_memory;
 VkBuffer vs_uniform_block_buffer;
@@ -124,6 +131,24 @@ const char* device_types[] = {
     "unknown",
 };
 
+map<uint32_t, string> memory_property_bit_name_map = {
+    {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "DEVICE_LOCAL"},
+    {VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, "HOST_VISIBLE"},
+    {VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, "HOST_COHERENT"},
+    {VK_MEMORY_PROPERTY_HOST_CACHED_BIT, "HOST_CACHED"},
+    {VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT, "LAZILY_ALLOCATED"},
+};
+
+void print_memory_property_bits(VkMemoryPropertyFlags flags)
+{
+    bool add_or = false;
+    for(auto& bit : memory_property_bit_name_map)
+	if(flags & bit.first) {
+	    printf("%s%s", add_or ? " | " : "", bit.second.c_str());
+	    add_or = true;
+	}
+}
+
 void print_device_information(VkPhysicalDevice physical_device)
 {
     VkPhysicalDeviceProperties properties;
@@ -162,21 +187,108 @@ void print_device_information(VkPhysicalDevice physical_device)
 	    queue_families[i].minImageTransferGranularity.width,
 	    queue_families[i].minImageTransferGranularity.height,
 	    queue_families[i].minImageTransferGranularity.depth);
+
+	if(queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
+	    preferred_queue_family = i;
+    }
+
+    if(preferred_queue_family == NO_QUEUE_FAMILY) {
+	cerr << "no desired queue family was found\n";
+	exit(EXIT_FAILURE);
+    }
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+    for(int i = 0; i < memory_properties.memoryTypeCount; i++) {
+	printf("memory type %d: flags ", i);
+	print_memory_property_bits(memory_properties.memoryTypes[i].propertyFlags);
+	printf("\n");
     }
 }
 
 void create_device(VkPhysicalDevice physical_device, VkDevice* device)
 {
-#if 0
+    vector<const char*> extensions;
+
+    extensions.push_back("VK_KHR_swapchain");
+
+    VkDeviceQueueCreateInfo create_queues[1] = {};
+    float queue_priorities[1] = {1.0f};
+    create_queues[0].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+    create_queues[0].pNext = NULL;
+    create_queues[0].flags = 0;
+    create_queues[0].queueFamilyIndex = preferred_queue_family;
+    create_queues[0].queueCount = 1;
+    create_queues[0].pQueuePriorities = queue_priorities;
+
     VkDeviceCreateInfo create = {};
 
     create.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
     create.pNext = NULL;
     create.flags = 0;
     create.queueCreateInfoCount = 1;
-    create.pQueueCreateInfos = queue_create;
-    VK_CHECK(vkCreateDevice, &create, nullptr, device);
-#endif
+    create.pQueueCreateInfos = create_queues;
+    create.enabledExtensionCount = extensions.size();
+    create.ppEnabledExtensionNames = extensions.data();
+    VK_CHECK(vkCreateDevice(physical_device, &create, nullptr, device));
+}
+
+// (Sascha Willem's getMemoryTypeIndex)
+uint32_t getMemoryTypeIndex(uint32_t type_bits, VkMemoryPropertyFlags properties)
+{
+    // Iterate over all memory types available for the device used in this example
+    for (uint32_t i = 0; i < memory_properties.memoryTypeCount; i++)
+	if (type_bits & (1 << i))
+	    if ((memory_properties.memoryTypes[i].propertyFlags & properties) == properties)
+		return i;
+
+    throw "Could not find a suitable memory type!";
+}
+
+void create_vertex_buffers()
+{
+    // geometry data
+    static vertex vertices[3] = {
+	{{0, 0, 0}, {1, 0, 0}},
+	{{1, 0, 0}, {0, 1, 0}},
+	{{0, 1, 0}, {0, 0, 1}},
+    };
+    static uint32_t indices[3] = {0, 1, 2}; 
+
+    // host-writable memory and buffers
+    buffer vertex_staging;
+    buffer index_staging;
+    void *mapped; // when mapped, this points to the buffer
+
+    // Create a buffer - we can use buffers for things like vertex data
+    VkBufferCreateInfo create_buffer = {};
+    create_buffer.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    create_buffer.size = sizeof(vertices);
+    create_buffer.pNext = nullptr;
+    create_buffer.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    VK_CHECK(vkCreateBuffer(device, &create_buffer, nullptr, &vertex_staging.buf));
+
+    // Get the size and type requirements for memory containing this buffer
+    VkMemoryRequirements memory_req = {}; // Tells us how much memory and which memory types (by bit) can hold this memory
+    vkGetBufferMemoryRequirements(device, vertex_staging.buf, &memory_req);
+
+    // Allocate memory
+    VkMemoryAllocateInfo memory_alloc = {};
+    memory_alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    memory_alloc.pNext = nullptr;
+    memory_alloc.allocationSize = memory_req.size;
+    // Find the type which this memory requires which is visible to the
+    // CPU and also coherent, so when we unmap it it will be immediately
+    // visible to the GPU
+    memory_alloc.memoryTypeIndex = getMemoryTypeIndex(memory_req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &vertex_staging.mem));
+
+    // Map the memory, fill it, and unmap it
+    VK_CHECK(vkMapMemory(device, vertex_staging.mem, 0, memory_alloc.allocationSize, 0, &mapped));
+    memcpy(mapped, vertices, sizeof(vertices));
+    vkUnmapMemory(device, vertex_staging.mem);
+
+    // Tell Vulkan our buffer is in this memory at offset 0
+    VK_CHECK(vkBindBufferMemory(device, vertex_staging.buf, vertex_staging.mem, 0));
+
 }
 
 void vulkan_init()
@@ -186,6 +298,7 @@ void vulkan_init()
     choose_physical_device(instance, &physical_device);
     print_device_information(physical_device);
     create_device(physical_device, &device);
+    create_vertex_buffers();
 }
 
 void vulkan_cleanup()
