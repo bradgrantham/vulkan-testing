@@ -3,8 +3,10 @@
 #include <memory>
 #include <vector>
 #include <map>
+#include <string>
 
 #include <cstring>
+#include <cassert>
 
 #include "vulkan.h"
 
@@ -16,6 +18,8 @@
 #error Platform not supported.
 #endif
 
+#define DEFAULT_FENCE_TIMEOUT 100000000000
+
 // Styled somewhat after Sascha Willem's triangle
 
 using namespace std;
@@ -26,6 +30,11 @@ const uint32_t NO_QUEUE_FAMILY = 0xffffffff;
 uint32_t preferred_queue_family = NO_QUEUE_FAMILY;
 VkDevice device;
 VkPhysicalDeviceMemoryProperties memory_properties;
+VkQueue queue;
+VkCommandPool command_pool;
+
+bool enable_validation = true;
+bool dump_vulkan_calls = false;
 
 struct vertex {
     float v[3];
@@ -38,7 +47,6 @@ struct buffer {
 };
 
 buffer vertex_buffer;
-
 buffer index_buffer;
 
 #if 0
@@ -64,6 +72,34 @@ std::Vector<VkFence> wait_fences;
 
 #endif
 
+#define STR(f) #f
+
+map<VkResult, string> vkresult_name_map =
+{
+    {VK_ERROR_OUT_OF_HOST_MEMORY, "OUT_OF_HOST_MEMORY"},
+    {VK_ERROR_OUT_OF_DEVICE_MEMORY, "OUT_OF_DEVICE_MEMORY"},
+    {VK_ERROR_INITIALIZATION_FAILED, "INITIALIZATION_FAILED"},
+    {VK_ERROR_DEVICE_LOST, "DEVICE_LOST"},
+    {VK_ERROR_MEMORY_MAP_FAILED, "MEMORY_MAP_FAILED"},
+    {VK_ERROR_LAYER_NOT_PRESENT, "LAYER_NOT_PRESENT"},
+    {VK_ERROR_EXTENSION_NOT_PRESENT, "EXTENSION_NOT_PRESENT"},
+    {VK_ERROR_FEATURE_NOT_PRESENT, "FEATURE_NOT_PRESENT"},
+};
+
+#define VK_CHECK(f) \
+{ \
+    VkResult result = (f); \
+    if(result != VK_SUCCESS) { \
+	if(vkresult_name_map.count(f) > 0) { \
+	    cerr << "VkResult from " STR(f) " was " << vkresult_name_map[result] << " at line " << __LINE__ << "\n"; \
+	} \
+	else \
+	    cerr << "VkResult from " STR(f) " was " << result << " at line " << __LINE__ << "\n"; \
+	exit(EXIT_FAILURE); \
+    } \
+}
+
+
 void print_implementation_information()
 {
     uint32_t ext_count;
@@ -78,13 +114,23 @@ void print_implementation_information()
 void create_instance(VkInstance* instance)
 {
     vector<const char*> extensions;
+    vector<const char*> layers;
 
-    extensions.push_back("VK_KHR_surface");
-#if defined(WIN32)
+    extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
+#if defined(_WIN32)
     extensions.push_back("VK_KHR_win32_surface");
 #elif defined(__linux__)
     extensions.push_back("VK_KHR_xcb_surface");
 #endif
+
+    if(enable_validation) {
+	layers.push_back("VK_LAYER_LUNARG_core_validation");
+	layers.push_back("VK_LAYER_LUNARG_parameter_validation");
+	layers.push_back("VK_LAYER_LUNARG_object_tracker");
+    }
+    if(dump_vulkan_calls) {
+	layers.push_back("VK_LAYER_LUNARG_api_dump");
+    }
 
     VkApplicationInfo app_info = {};
     app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -98,23 +144,10 @@ void create_instance(VkInstance* instance)
     create.pApplicationInfo = &app_info;
     create.enabledExtensionCount = extensions.size();
     create.ppEnabledExtensionNames = extensions.data();
+    create.enabledLayerCount = layers.size();
+    create.ppEnabledLayerNames = layers.data();
 
-    VkResult result = vkCreateInstance(&create, nullptr, instance);
-    if(result != VK_SUCCESS) {
-	cerr << "VkResult from VkCreateInstance was " << result;
-	exit(EXIT_FAILURE);
-    }
-}
-
-#define STR(f) #f
-
-#define VK_CHECK(f) \
-{ \
-    VkResult result = (f); \
-    if(result != VK_SUCCESS) { \
-	cerr << "VkResult from " STR(f) " was " << result << " at line " << __LINE__ << "\n"; \
-	exit(EXIT_FAILURE); \
-    } \
+    VK_CHECK(vkCreateInstance(&create, nullptr, instance));
 }
 
 void choose_physical_device(VkInstance instance, VkPhysicalDevice* physical_device)
@@ -214,7 +247,7 @@ void create_device(VkPhysicalDevice physical_device, VkDevice* device)
 {
     vector<const char*> extensions;
 
-    extensions.push_back("VK_KHR_swapchain");
+    extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
 
     VkDeviceQueueCreateInfo create_queues[1] = {};
     float queue_priorities[1] = {1.0f};
@@ -235,9 +268,17 @@ void create_device(VkPhysicalDevice physical_device, VkDevice* device)
     create.enabledExtensionCount = extensions.size();
     create.ppEnabledExtensionNames = extensions.data();
     VK_CHECK(vkCreateDevice(physical_device, &create, nullptr, device));
+
+    vkGetDeviceQueue(*device, preferred_queue_family, 0, &queue);
+
+    VkCommandPoolCreateInfo create_command_pool = {};
+    create_command_pool.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    create_command_pool.flags = 0;
+    create_command_pool.queueFamilyIndex = preferred_queue_family;
+    VK_CHECK(vkCreateCommandPool(*device, &create_command_pool, nullptr, &command_pool));
 }
 
-// (Sascha Willem's getMemoryTypeIndex)
+// Sascha Willem's 
 uint32_t getMemoryTypeIndex(uint32_t type_bits, VkMemoryPropertyFlags properties)
 {
     // Iterate over all memory types available for the device used in this example
@@ -248,6 +289,59 @@ uint32_t getMemoryTypeIndex(uint32_t type_bits, VkMemoryPropertyFlags properties
 
     throw "Could not find a suitable memory type!";
 }
+
+// Sascha Willem's 
+VkCommandBuffer getCommandBuffer(bool begin)
+{
+    VkCommandBuffer cmdBuffer;
+
+    VkCommandBufferAllocateInfo cmdBufAllocateInfo = {};
+    cmdBufAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cmdBufAllocateInfo.commandPool = command_pool;
+    cmdBufAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmdBufAllocateInfo.commandBufferCount = 1;
+
+    VK_CHECK(vkAllocateCommandBuffers(device, &cmdBufAllocateInfo, &cmdBuffer));
+
+    // If requested, also start the new command buffer
+    if (begin) {
+	VkCommandBufferBeginInfo cmdBufInfo = {};
+	cmdBufInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+	cmdBufInfo.flags = 0;
+	VK_CHECK(vkBeginCommandBuffer(cmdBuffer, &cmdBufInfo));
+    }
+
+    return cmdBuffer;
+}
+
+// Sascha Willem's 
+void flushCommandBuffer(VkCommandBuffer commandBuffer)
+{
+    assert(commandBuffer != VK_NULL_HANDLE);
+
+    VK_CHECK(vkEndCommandBuffer(commandBuffer));
+
+    VkSubmitInfo submitInfo = {};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+
+    // Create fence to ensure that the command buffer has finished executing
+    VkFenceCreateInfo fenceCreateInfo = {};
+    fenceCreateInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceCreateInfo.flags = 0;
+    VkFence fence;
+    VK_CHECK(vkCreateFence(device, &fenceCreateInfo, nullptr, &fence));
+
+    // Submit to the queue
+    VK_CHECK(vkQueueSubmit(queue, 1, &submitInfo, fence));
+    // Wait for the fence to signal that command buffer has finished executing
+    VK_CHECK(vkWaitForFences(device, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
+
+    vkDestroyFence(device, fence, nullptr);
+    vkFreeCommandBuffers(device, command_pool, 1, &commandBuffer);
+}
+
 
 void create_vertex_buffers()
 {
@@ -264,22 +358,30 @@ void create_vertex_buffers()
     buffer index_staging;
     void *mapped; // when mapped, this points to the buffer
 
-    // Create a buffer - we can use buffers for things like vertex data
-    VkBufferCreateInfo create_buffer = {};
-    create_buffer.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    create_buffer.size = sizeof(vertices);
-    create_buffer.pNext = nullptr;
-    create_buffer.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-    VK_CHECK(vkCreateBuffer(device, &create_buffer, nullptr, &vertex_staging.buf));
-
-    // Get the size and type requirements for memory containing this buffer
-    VkMemoryRequirements memory_req = {}; // Tells us how much memory and which memory types (by bit) can hold this memory
-    vkGetBufferMemoryRequirements(device, vertex_staging.buf, &memory_req);
+    // Tells us how much memory and which memory types (by bit) can hold this memory
+    VkMemoryRequirements memory_req = {};
 
     // Allocate memory
     VkMemoryAllocateInfo memory_alloc = {};
     memory_alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
     memory_alloc.pNext = nullptr;
+
+    // Create a buffer - buffers are used for things like vertex data
+    // This one will be used as the source of a transfer to a GPU-addressable
+    // buffer
+    VkBufferCreateInfo create_staging_buffer = {};
+    create_staging_buffer.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    create_staging_buffer.pNext = nullptr;
+    create_staging_buffer.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+
+
+    // Create a buffer for vertices, allocate memory, map it, copy vertices to the memory, unmap, and then bind the vertex buffer to that memory.
+    create_staging_buffer.size = sizeof(vertices);
+    VK_CHECK(vkCreateBuffer(device, &create_staging_buffer, nullptr, &vertex_staging.buf));
+
+    // Get the size and type requirements for memory containing this buffer
+    vkGetBufferMemoryRequirements(device, vertex_staging.buf, &memory_req);
+
     memory_alloc.allocationSize = memory_req.size;
     // Find the type which this memory requires which is visible to the
     // CPU and also coherent, so when we unmap it it will be immediately
@@ -295,6 +397,83 @@ void create_vertex_buffers()
     // Tell Vulkan our buffer is in this memory at offset 0
     VK_CHECK(vkBindBufferMemory(device, vertex_staging.buf, vertex_staging.mem, 0));
 
+
+    // Create a buffer for indices, allocate memory, map it, copy indices to the memory, unmap, and then bind the index buffer to that memory.
+    create_staging_buffer.size = sizeof(indices);
+    VK_CHECK(vkCreateBuffer(device, &create_staging_buffer, nullptr, &index_staging.buf));
+
+    // Get the size and type requirements for memory containing this buffer
+    vkGetBufferMemoryRequirements(device, index_staging.buf, &memory_req);
+
+    memory_alloc.allocationSize = memory_req.size;
+    // Find the type which this memory requires which is visible to the
+    // CPU and also coherent, so when we unmap it it will be immediately
+    // visible to the GPU
+    memory_alloc.memoryTypeIndex = getMemoryTypeIndex(memory_req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &index_staging.mem));
+
+    // Map the memory, fill it, and unmap it
+    VK_CHECK(vkMapMemory(device, index_staging.mem, 0, memory_alloc.allocationSize, 0, &mapped));
+    memcpy(mapped, indices, sizeof(indices));
+    vkUnmapMemory(device, index_staging.mem);
+
+    // Tell Vulkan our buffer is in this memory at offset 0
+    VK_CHECK(vkBindBufferMemory(device, index_staging.buf, index_staging.mem, 0));
+
+
+    // This buffer will be used as the source of a transfer to a
+    // GPU-addressable buffer
+    VkBufferCreateInfo create_vertex_buffer = {};
+    create_vertex_buffer.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    create_vertex_buffer.pNext = nullptr;
+    create_vertex_buffer.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+
+    // Create a buffer representing vertices on the GPU
+    create_vertex_buffer.size = sizeof(vertices);
+    VK_CHECK(vkCreateBuffer(device, &create_vertex_buffer, nullptr, &vertex_buffer.buf));
+
+    // Get the size and type requirements for memory containing this buffer
+    vkGetBufferMemoryRequirements(device, vertex_buffer.buf, &memory_req);
+
+    // Create a new GPU accessible memory for vertices
+    memory_alloc.allocationSize = memory_req.size;
+    memory_alloc.memoryTypeIndex = getMemoryTypeIndex(memory_req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &vertex_buffer.mem));
+    VK_CHECK(vkBindBufferMemory(device, vertex_buffer.buf, vertex_buffer.mem, 0));
+
+    // This buffer will be used as the source of a transfer to a
+    // GPU-addressable buffer
+    VkBufferCreateInfo create_index_buffer = {};
+    create_index_buffer.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    create_index_buffer.pNext = nullptr;
+    create_index_buffer.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+
+    // Create a buffer representing indices on the GPU
+    create_index_buffer.size = sizeof(indices);
+    VK_CHECK(vkCreateBuffer(device, &create_index_buffer, nullptr, &index_buffer.buf));
+
+    // Get the size and type requirements for memory containing this buffer
+    vkGetBufferMemoryRequirements(device, index_buffer.buf, &memory_req);
+
+    // Create a new GPU accessible memory for indices
+    memory_alloc.allocationSize = memory_req.size;
+    memory_alloc.memoryTypeIndex = getMemoryTypeIndex(memory_req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &index_buffer.mem));
+    VK_CHECK(vkBindBufferMemory(device, index_buffer.buf, index_buffer.mem, 0));
+
+    // Copy from staging to the GPU-local buffers
+    VkCommandBuffer commands = getCommandBuffer(true);
+    VkBufferCopy copy = {};
+    copy.size = sizeof(vertices);
+    vkCmdCopyBuffer(commands, vertex_staging.buf, vertex_buffer.buf, 1, &copy);
+    copy.size = sizeof(indices);
+    vkCmdCopyBuffer(commands, index_staging.buf, index_buffer.buf, 1, &copy);
+    flushCommandBuffer(commands);
+
+    vkDestroyBuffer(device, vertex_staging.buf, nullptr);
+    vkDestroyBuffer(device, index_staging.buf, nullptr);
+    vkFreeMemory(device, vertex_staging.mem, nullptr);
+    vkFreeMemory(device, index_staging.mem, nullptr);
 }
 
 void vulkan_init()
@@ -333,6 +512,8 @@ void vulkan_cleanup()
 
 int main(int argc, char **argv)
 {
+    string foo("bar");
+    cerr << foo;
     vulkan_init();
 
     // Render until quit
