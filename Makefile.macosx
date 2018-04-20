@@ -1,0 +1,4 @@
+CXXFLAGS=-Ivulkan --std=c++11 -Wall 
+LDLIBS=-lvulkan
+vulkan_test: main.cpp
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
