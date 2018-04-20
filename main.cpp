@@ -512,8 +512,6 @@ void vulkan_cleanup()
 
 int main(int argc, char **argv)
 {
-    string foo("bar");
-    cerr << foo;
     vulkan_init();
 
     // Render until quit
