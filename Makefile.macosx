@@ -1,4 +1,6 @@
-CXXFLAGS=-Ivulkan --std=c++11 -Wall 
-LDLIBS=-lvulkan
+CXXFLAGS        +=       -Ivulkan --std=c++11 -Wall -g 
+LDFLAGS         +=      -F.
+LDLIBS          +=      -lobjc -framework CoreFoundation -framework IOKit -framework IOSurface -framework Foundation -framework Metal -framework MoltenVK -framework Cocoa -framework QuartzCore 
+
 vulkan_test: main.cpp
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
