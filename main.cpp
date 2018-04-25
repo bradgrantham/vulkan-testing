@@ -11,9 +11,14 @@
 #include "vulkan.h"
 
 #if defined(_WIN32)
+#define PLATFORM_WINDOWS
 // Windows supported
 #elif defined(__linux__)
+#define PLATFORM_LINUX
 // Linux supported
+#elif defined(__APPLE__) && defined(__MACH__)
+// MacOS not supported yet but want to get to runtime
+#define PLATFORM_MOLTENVK
 #else
 #error Platform not supported.
 #endif
@@ -32,6 +37,11 @@ VkDevice device;
 VkPhysicalDeviceMemoryProperties memory_properties;
 VkQueue queue;
 VkCommandPool command_pool;
+VkSurfaceKHR surface;
+
+#ifdef PLATFORM_MACOS
+void *window;
+#endif // PLATFORM_MACOS
 
 bool enable_validation = true;
 bool dump_vulkan_calls = false;
@@ -117,16 +127,19 @@ void create_instance(VkInstance* instance)
     vector<const char*> layers;
 
     extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
-#if defined(_WIN32)
+#if defined(PLATFORM_WINDOWS)
     extensions.push_back("VK_KHR_win32_surface");
-#elif defined(__linux__)
+#elif defined(PLATFORM_LINUX)
     extensions.push_back("VK_KHR_xcb_surface");
 #endif
 
     if(enable_validation) {
-	layers.push_back("VK_LAYER_LUNARG_core_validation");
-	layers.push_back("VK_LAYER_LUNARG_parameter_validation");
-	layers.push_back("VK_LAYER_LUNARG_object_tracker");
+#ifndef PLATFORM_MOLTENVK
+	layers.push_back("VK_LAYER_LUNARG_standard_validation");
+#endif
+	// layers.push_back("VK_LAYER_LUNARG_core_validation");
+	// layers.push_back("VK_LAYER_LUNARG_parameter_validation");
+	// layers.push_back("VK_LAYER_LUNARG_object_tracker");
     }
     if(dump_vulkan_calls) {
 	layers.push_back("VK_LAYER_LUNARG_api_dump");
@@ -476,14 +489,42 @@ void create_vertex_buffers()
     vkFreeMemory(device, index_staging.mem, nullptr);
 }
 
-void vulkan_init()
+void create_surface()
+{
+#ifdef PLATFORM_MACOS
+    // Get the first display
+    uint32_t display_count;
+    VK_CHECK(vkGetPhysicalDeviceDisplayPropertiesKHR(physical_device, &display_count, NULL));
+
+    if (display_count == 0)
+        throw "Cannot find any display!\n";
+
+    VkMacOSSurfaceCreateInfoMVK create_surface = {};
+    surface.sType = VK_STRUCTURE_TYPE_MACOS_SURFACE_CREATE_INFO_MVK;
+    surface.pView = window;
+
+    VK_CHECK(vkCreateMacOSSurfaceMVK(instance, &surface, NULL, &demo->surface));
+#endif // PLATFORM_*
+}
+
+
+void init()
 {
     print_implementation_information();
     create_instance(&instance);
+    // get physical device surface support functions
+    // get swapchain functions
     choose_physical_device(instance, &physical_device);
     print_device_information(physical_device);
     create_device(physical_device, &device);
     create_vertex_buffers();
+    // create display surface
+    create_surface();
+    // create swapchain
+    // create descriptor sets
+    // load shader modules
+    // create pipeline layout
+    // create pipeline
 }
 
 void vulkan_cleanup()
@@ -512,9 +553,16 @@ void vulkan_cleanup()
 
 int main(int argc, char **argv)
 {
-    vulkan_init();
+    init();
 
-    // Render until quit
+    // while(1)
+    {
+        // start command buffer
+        // enqueue draw command
+        // end command buffer
+        // enqueue command buffer for graphics
+        // copy to present
+    }
 
     vulkan_cleanup();
 }
