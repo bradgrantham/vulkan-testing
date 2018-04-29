@@ -3,12 +3,14 @@
 #include <memory>
 #include <vector>
 #include <map>
+#include <set>
 #include <string>
 
 #include <cstring>
 #include <cassert>
 
 #include "vulkan.h"
+#include <GLFW/glfw3.h>
 
 #if defined(_WIN32)
 #define PLATFORM_WINDOWS
@@ -123,44 +125,60 @@ void print_implementation_information()
 
 void create_instance(VkInstance* instance)
 {
-    vector<const char*> extensions;
-    vector<const char*> layers;
+    set<string> extension_set;
+    set<string> layer_set;
 
-    extensions.push_back(VK_KHR_SURFACE_EXTENSION_NAME);
+    uint32_t glfw_reqd_extension_count;
+    const char** glfw_reqd_extensions = glfwGetRequiredInstanceExtensions(&glfw_reqd_extension_count);
+    for(int i = 0; i < glfw_reqd_extension_count; i++)
+	extension_set.insert(glfw_reqd_extensions[i]);
+
+    extension_set.insert(VK_KHR_SURFACE_EXTENSION_NAME);
 #if defined(PLATFORM_WINDOWS)
-    extensions.push_back("VK_KHR_win32_surface");
+    extension_set.insert("VK_KHR_win32_surface");
 #elif defined(PLATFORM_LINUX)
-    extensions.push_back("VK_KHR_xcb_surface");
+    extension_set.insert("VK_KHR_xcb_surface");
 #endif
 
     if(enable_validation) {
 #ifndef PLATFORM_MOLTENVK
-	layers.push_back("VK_LAYER_LUNARG_standard_validation");
+	layer_set.insert("VK_LAYER_LUNARG_standard_validation");
 #endif
-	// layers.push_back("VK_LAYER_LUNARG_core_validation");
-	// layers.push_back("VK_LAYER_LUNARG_parameter_validation");
-	// layers.push_back("VK_LAYER_LUNARG_object_tracker");
+	// layer_set.insert("VK_LAYER_LUNARG_core_validation");
+	// layer_set.insert("VK_LAYER_LUNARG_parameter_validation");
+	// layer_set.insert("VK_LAYER_LUNARG_object_tracker");
     }
     if(dump_vulkan_calls) {
-	layers.push_back("VK_LAYER_LUNARG_api_dump");
+	layer_set.insert("VK_LAYER_LUNARG_api_dump");
     }
 
-    VkApplicationInfo app_info = {};
-    app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-    app_info.pApplicationName = "triangle";
-    app_info.pEngineName = "triangle";
-    app_info.apiVersion = VK_API_VERSION_1_0;
+    {
+	vector<const char*> extensions;
+	vector<const char*> layers;
+	// Careful - only valid for duration of sets where contents have not changed
+	for(auto& s: extension_set)
+	    extensions.push_back(s.c_str());
 
-    VkInstanceCreateInfo create = {};
-    create.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-    create.pNext = NULL;
-    create.pApplicationInfo = &app_info;
-    create.enabledExtensionCount = extensions.size();
-    create.ppEnabledExtensionNames = extensions.data();
-    create.enabledLayerCount = layers.size();
-    create.ppEnabledLayerNames = layers.data();
+	for(auto& s: layer_set)
+	    layers.push_back(s.c_str());
 
-    VK_CHECK(vkCreateInstance(&create, nullptr, instance));
+	VkApplicationInfo app_info = {};
+	app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+	app_info.pApplicationName = "triangle";
+	app_info.pEngineName = "triangle";
+	app_info.apiVersion = VK_API_VERSION_1_0;
+
+	VkInstanceCreateInfo create = {};
+	create.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+	create.pNext = NULL;
+	create.pApplicationInfo = &app_info;
+	create.enabledExtensionCount = extensions.size();
+	create.ppEnabledExtensionNames = extensions.data();
+	create.enabledLayerCount = layers.size();
+	create.ppEnabledLayerNames = layers.data();
+
+	VK_CHECK(vkCreateInstance(&create, nullptr, instance));
+    }
 }
 
 void choose_physical_device(VkInstance instance, VkPhysicalDevice* physical_device)
@@ -489,26 +507,7 @@ void create_vertex_buffers()
     vkFreeMemory(device, index_staging.mem, nullptr);
 }
 
-void create_surface()
-{
-#ifdef PLATFORM_MACOS
-    // Get the first display
-    uint32_t display_count;
-    VK_CHECK(vkGetPhysicalDeviceDisplayPropertiesKHR(physical_device, &display_count, NULL));
-
-    if (display_count == 0)
-        throw "Cannot find any display!\n";
-
-    VkMacOSSurfaceCreateInfoMVK create_surface = {};
-    surface.sType = VK_STRUCTURE_TYPE_MACOS_SURFACE_CREATE_INFO_MVK;
-    surface.pView = window;
-
-    VK_CHECK(vkCreateMacOSSurfaceMVK(instance, &surface, NULL, &demo->surface));
-#endif // PLATFORM_*
-}
-
-
-void init()
+void init_vulkan()
 {
     print_implementation_information();
     create_instance(&instance);
@@ -517,9 +516,11 @@ void init()
     choose_physical_device(instance, &physical_device);
     print_device_information(physical_device);
     create_device(physical_device, &device);
+}
+
+void prepare_vulkan()
+{
     create_vertex_buffers();
-    // create display surface
-    create_surface();
     // create swapchain
     // create descriptor sets
     // load shader modules
@@ -527,7 +528,7 @@ void init()
     // create pipeline
 }
 
-void vulkan_cleanup()
+void cleanup_vulkan()
 {
 #if 0
     VkDestroyPipeline(device, pipeline, nullptr);
@@ -551,9 +552,37 @@ void vulkan_cleanup()
 #endif
 }
 
+static void error_callback(int error, const char* description)
+{
+    fprintf(stderr, "GLFW: %s\n", description);
+}
+
 int main(int argc, char **argv)
 {
-    init();
+    glfwSetErrorCallback(error_callback);
+
+    if(!glfwInit()) {
+	cerr << "GLFW initialization failed.\n";
+        exit(EXIT_FAILURE);
+    }
+
+    if (!glfwVulkanSupported()) {
+	cerr << "GLFW reports Vulkan is not supported\n";
+        exit(EXIT_FAILURE);
+    }
+
+    init_vulkan();
+
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    GLFWwindow* window = glfwCreateWindow(512, 512, "vulkan test", NULL, NULL);
+
+    VkResult err = glfwCreateWindowSurface(instance, window, NULL, &surface);
+    if (err) {
+	cerr << "GLFW window creation failed\n";
+        exit(EXIT_FAILURE);
+    }
+
+    prepare_vulkan();
 
     // while(1)
     {
@@ -564,6 +593,6 @@ int main(int argc, char **argv)
         // copy to present
     }
 
-    vulkan_cleanup();
+    cleanup_vulkan();
 }
 
