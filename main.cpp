@@ -115,12 +115,13 @@ map<VkResult, string> vkresult_name_map =
 void print_implementation_information()
 {
     uint32_t ext_count;
+        printf("enumerate is %p\n", vkEnumerateInstanceExtensionProperties);
     vkEnumerateInstanceExtensionProperties(nullptr, &ext_count, nullptr);
     unique_ptr<VkExtensionProperties[]> exts(new VkExtensionProperties[ext_count]);
     vkEnumerateInstanceExtensionProperties(nullptr, &ext_count, exts.get());
-    printf("Vulkan implementation properties:\n");
+    printf("Vulkan extension properties:\n");
     for(int i = 0; i < ext_count; i++)
-	printf("%s\n", exts[i].extensionName);
+	printf("    %s\n", exts[i].extensionName);
 }
 
 void create_instance(VkInstance* instance)
@@ -130,20 +131,22 @@ void create_instance(VkInstance* instance)
 
     uint32_t glfw_reqd_extension_count;
     const char** glfw_reqd_extensions = glfwGetRequiredInstanceExtensions(&glfw_reqd_extension_count);
-    for(int i = 0; i < glfw_reqd_extension_count; i++)
+    for(int i = 0; i < glfw_reqd_extension_count; i++) {
+        printf("required extension: %s\n", glfw_reqd_extensions[i]);
 	extension_set.insert(glfw_reqd_extensions[i]);
+    }
 
     extension_set.insert(VK_KHR_SURFACE_EXTENSION_NAME);
 #if defined(PLATFORM_WINDOWS)
     extension_set.insert("VK_KHR_win32_surface");
 #elif defined(PLATFORM_LINUX)
     extension_set.insert("VK_KHR_xcb_surface");
+#elif defined(PLATFORM_MACOS)
+    extension_set.insert("VK_MVK_macos_surface");
 #endif
 
     if(enable_validation) {
-#ifndef PLATFORM_MOLTENVK
 	layer_set.insert("VK_LAYER_LUNARG_standard_validation");
-#endif
 	// layer_set.insert("VK_LAYER_LUNARG_core_validation");
 	// layer_set.insert("VK_LAYER_LUNARG_parameter_validation");
 	// layer_set.insert("VK_LAYER_LUNARG_object_tracker");
@@ -174,6 +177,8 @@ void create_instance(VkInstance* instance)
 	create.pApplicationInfo = &app_info;
 	create.enabledExtensionCount = extensions.size();
 	create.ppEnabledExtensionNames = extensions.data();
+        for(int i = 0; i < create.enabledExtensionCount; i++)
+            printf("extension required of instance: %s\n", create.ppEnabledExtensionNames[i]);
 	create.enabledLayerCount = layers.size();
 	create.ppEnabledLayerNames = layers.data();
 
@@ -561,15 +566,17 @@ int main(int argc, char **argv)
 {
     glfwSetErrorCallback(error_callback);
 
+    printf("glfwinit\n");
     if(!glfwInit()) {
 	cerr << "GLFW initialization failed.\n";
         exit(EXIT_FAILURE);
     }
 
-    if (!glfwVulkanSupported()) {
-	cerr << "GLFW reports Vulkan is not supported\n";
-        exit(EXIT_FAILURE);
-    }
+    // printf("glfwvulkansupported\n");
+    // if (!glfwVulkanSupported()) {
+	// cerr << "GLFW reports Vulkan is not supported\n";
+        // exit(EXIT_FAILURE);
+    // }
 
     init_vulkan();
 
@@ -578,7 +585,7 @@ int main(int argc, char **argv)
 
     VkResult err = glfwCreateWindowSurface(instance, window, NULL, &surface);
     if (err) {
-	cerr << "GLFW window creation failed\n";
+	cerr << "GLFW window creation failed " << err << "\n";
         exit(EXIT_FAILURE);
     }
 

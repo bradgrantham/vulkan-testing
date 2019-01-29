@@ -1,6 +1,9 @@
-CXXFLAGS        +=       -Ivulkan --std=c++11 -Wall -g 
-LDFLAGS         +=      -F.
-LDLIBS          +=      -lobjc -framework CoreFoundation -framework IOKit -framework IOSurface -framework Foundation -framework Metal -framework MoltenVK -framework Cocoa -framework QuartzCore 
+VULKAN_SDK	= $(HOME)/Downloads/vulkansdk-macos-1.1.97.0
+MOLTENVK	= $(VULKAN_SDK)/MoltenVK/
+
+CXXFLAGS        +=      -Ivulkan --std=c++11 -Wall -g -I /opt/local/include -DPLATFORM_MACOS
+LDFLAGS         +=      -F. -L /opt/local/lib -F $(MOLTENVK)/macOS/framework -L $(VULKAN_SDK)/macOS/lib
+LDLIBS          +=      -lvulkan -lglfw -lobjc -framework CoreFoundation -framework IOKit -framework IOSurface -framework Foundation -framework Metal -framework Cocoa -framework QuartzCore
 
 vulkan_test: main.cpp
 	$(CXX) $(CXXFLAGS) $(LDFLAGS) $^ -o $@ $(LDLIBS)
