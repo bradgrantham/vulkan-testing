@@ -9,7 +9,7 @@
 #include <cstring>
 #include <cassert>
 
-#include "vulkan.h"
+#include <vulkan.h>
 #include <GLFW/glfw3.h>
 
 #if defined(_WIN32)
@@ -45,6 +45,7 @@ VkSurfaceKHR surface;
 void *window;
 #endif // PLATFORM_MACOS
 
+bool be_noisy = true;
 bool enable_validation = true;
 bool dump_vulkan_calls = false;
 
@@ -115,13 +116,14 @@ map<VkResult, string> vkresult_name_map =
 void print_implementation_information()
 {
     uint32_t ext_count;
-        printf("enumerate is %p\n", vkEnumerateInstanceExtensionProperties);
     vkEnumerateInstanceExtensionProperties(nullptr, &ext_count, nullptr);
     unique_ptr<VkExtensionProperties[]> exts(new VkExtensionProperties[ext_count]);
     vkEnumerateInstanceExtensionProperties(nullptr, &ext_count, exts.get());
-    printf("Vulkan extension properties:\n");
-    for(int i = 0; i < ext_count; i++)
-	printf("    %s\n", exts[i].extensionName);
+    if(be_noisy) {
+        printf("Vulkan instance extensions:\n");
+        for(int i = 0; i < ext_count; i++)
+            printf("    (%08X) %s\n", exts[i].specVersion, exts[i].extensionName);
+    }
 }
 
 void create_instance(VkInstance* instance)
@@ -132,7 +134,6 @@ void create_instance(VkInstance* instance)
     uint32_t glfw_reqd_extension_count;
     const char** glfw_reqd_extensions = glfwGetRequiredInstanceExtensions(&glfw_reqd_extension_count);
     for(int i = 0; i < glfw_reqd_extension_count; i++) {
-        printf("required extension: %s\n", glfw_reqd_extensions[i]);
 	extension_set.insert(glfw_reqd_extensions[i]);
     }
 
@@ -177,8 +178,6 @@ void create_instance(VkInstance* instance)
 	create.pApplicationInfo = &app_info;
 	create.enabledExtensionCount = extensions.size();
 	create.ppEnabledExtensionNames = extensions.data();
-        for(int i = 0; i < create.enabledExtensionCount; i++)
-            printf("extension required of instance: %s\n", create.ppEnabledExtensionNames[i]);
 	create.enabledLayerCount = layers.size();
 	create.ppEnabledLayerNames = layers.data();
 
@@ -190,7 +189,9 @@ void choose_physical_device(VkInstance instance, VkPhysicalDevice* physical_devi
 {
     uint32_t gpu_count = 0;
     VK_CHECK(vkEnumeratePhysicalDevices(instance, &gpu_count, nullptr));
-    cerr << gpu_count << " gpus enumerated\n";
+    if(be_noisy) {
+        cerr << gpu_count << " gpus enumerated\n";
+    }
     VkPhysicalDevice physical_devices[32];
     gpu_count = min(32u, gpu_count);
     VK_CHECK(vkEnumeratePhysicalDevices(instance, &gpu_count, physical_devices));
@@ -272,10 +273,12 @@ void print_device_information(VkPhysicalDevice physical_device)
 	exit(EXIT_FAILURE);
     }
     vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
-    for(int i = 0; i < memory_properties.memoryTypeCount; i++) {
-	printf("memory type %d: flags ", i);
-	print_memory_property_bits(memory_properties.memoryTypes[i].propertyFlags);
-	printf("\n");
+    if(be_noisy) {
+        for(int i = 0; i < memory_properties.memoryTypeCount; i++) {
+            printf("memory type %d: flags ", i);
+            print_memory_property_bits(memory_properties.memoryTypes[i].propertyFlags);
+            printf("\n");
+        }
     }
 }
 
@@ -566,17 +569,15 @@ int main(int argc, char **argv)
 {
     glfwSetErrorCallback(error_callback);
 
-    printf("glfwinit\n");
     if(!glfwInit()) {
 	cerr << "GLFW initialization failed.\n";
         exit(EXIT_FAILURE);
     }
 
-    // printf("glfwvulkansupported\n");
-    // if (!glfwVulkanSupported()) {
-	// cerr << "GLFW reports Vulkan is not supported\n";
-        // exit(EXIT_FAILURE);
-    // }
+    if (!glfwVulkanSupported()) {
+	cerr << "GLFW reports Vulkan is not supported\n";
+        exit(EXIT_FAILURE);
+    }
 
     init_vulkan();
 
