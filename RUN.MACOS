@@ -1,0 +1,1 @@
+VK_LAYER_PATH=/Users/grantham/Downloads/vulkansdk-macos-1.1.97.0/macOS/etc/vulkan/explicit_layer.d VK_ICD_FILENAMES=/Users/grantham/Downloads/vulkansdk-macos-1.1.97.0//macOS/etc/vulkan/icd.d/MoltenVK_icd.json DYLD_LIBRARY_PATH=/Users/grantham/Downloads/vulkansdk-macos-1.1.97.0//macOS/lib/ ./vulkan_test
