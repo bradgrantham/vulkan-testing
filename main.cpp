@@ -45,9 +45,10 @@ VkSurfaceKHR surface;
 void *window;
 #endif // PLATFORM_MACOS
 
-bool be_noisy = true;
-bool enable_validation = true;
+bool be_noisy = false;
+bool enable_validation = false;
 bool dump_vulkan_calls = false;
+bool do_the_wrong_thing = false;
 
 struct vertex {
     float v[3];
@@ -147,7 +148,8 @@ void create_instance(VkInstance* instance)
 #endif
 
     if(enable_validation) {
-	layer_set.insert("VK_LAYER_LUNARG_standard_validation");
+	layer_set.insert("VK_LAYER_KHRONOS_validation");
+	// layer_set.insert("VK_LAYER_LUNARG_standard_validation");
 	// layer_set.insert("VK_LAYER_LUNARG_core_validation");
 	// layer_set.insert("VK_LAYER_LUNARG_parameter_validation");
 	// layer_set.insert("VK_LAYER_LUNARG_object_tracker");
@@ -254,31 +256,23 @@ void print_device_information(VkPhysicalDevice physical_device)
     vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, nullptr);
     unique_ptr<VkQueueFamilyProperties[]> queue_families(new VkQueueFamilyProperties[queue_family_count]);
     vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.get());
-    for(int i = 0; i < queue_family_count; i++) {
-	printf("queue %d:\n", i);
-	printf("    flags:                       %04X\n", queue_families[i].queueFlags);
-	printf("    queueCount:                  %d\n", queue_families[i].queueCount);
-	printf("    timestampValidBits:          %d\n", queue_families[i].timestampValidBits);
-	printf("    minImageTransferGranularity: (%d, %d, %d)\n",
-	    queue_families[i].minImageTransferGranularity.width,
-	    queue_families[i].minImageTransferGranularity.height,
-	    queue_families[i].minImageTransferGranularity.depth);
-
-	if(queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT)
-	    preferred_queue_family = i;
-    }
-
-    if(preferred_queue_family == NO_QUEUE_FAMILY) {
-	cerr << "no desired queue family was found\n";
-	exit(EXIT_FAILURE);
-    }
-    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
     if(be_noisy) {
-        for(int i = 0; i < memory_properties.memoryTypeCount; i++) {
-            printf("memory type %d: flags ", i);
-            print_memory_property_bits(memory_properties.memoryTypes[i].propertyFlags);
-            printf("\n");
+        for(int i = 0; i < queue_family_count; i++) {
+            printf("queue %d:\n", i);
+            printf("    flags:                       %04X\n", queue_families[i].queueFlags);
+            printf("    queueCount:                  %d\n", queue_families[i].queueCount);
+            printf("    timestampValidBits:          %d\n", queue_families[i].timestampValidBits);
+            printf("    minImageTransferGranularity: (%d, %d, %d)\n",
+                queue_families[i].minImageTransferGranularity.width,
+                queue_families[i].minImageTransferGranularity.height,
+                queue_families[i].minImageTransferGranularity.depth);
         }
+    }
+
+    for(int i = 0; i < memory_properties.memoryTypeCount; i++) {
+        printf("memory type %d: flags ", i);
+        print_memory_property_bits(memory_properties.memoryTypes[i].propertyFlags);
+        printf("\n");
     }
 }
 
@@ -402,7 +396,11 @@ void create_vertex_buffers()
 
     // Allocate memory
     VkMemoryAllocateInfo memory_alloc = {};
-    memory_alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    if(do_the_wrong_thing) {
+        memory_alloc.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
+    } else {
+        memory_alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    }
     memory_alloc.pNext = nullptr;
 
     // Create a buffer - buffers are used for things like vertex data
@@ -522,7 +520,26 @@ void init_vulkan()
     // get physical device surface support functions
     // get swapchain functions
     choose_physical_device(instance, &physical_device);
-    print_device_information(physical_device);
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+
+    uint32_t queue_family_count;
+    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, nullptr);
+    unique_ptr<VkQueueFamilyProperties[]> queue_families(new VkQueueFamilyProperties[queue_family_count]);
+    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.get());
+    for(int i = 0; i < queue_family_count; i++) {
+        if(queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+                preferred_queue_family = i;
+        }
+    }
+
+    if(preferred_queue_family == NO_QUEUE_FAMILY) {
+	cerr << "no desired queue family was found\n";
+	exit(EXIT_FAILURE);
+    }
+
+    if(be_noisy) {
+        print_device_information(physical_device);
+    }
     create_device(physical_device, &device);
 }
 
@@ -567,6 +584,10 @@ static void error_callback(int error, const char* description)
 
 int main(int argc, char **argv)
 {
+    be_noisy = (getenv("BE_NOISY") != NULL);
+    enable_validation = (getenv("VALIDATE") != NULL);
+    do_the_wrong_thing = (getenv("BE_WRONG") != NULL);
+
     glfwSetErrorCallback(error_callback);
 
     if(!glfwInit()) {
