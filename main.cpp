@@ -9,7 +9,7 @@
 #include <cstring>
 #include <cassert>
 
-#include <vulkan.h>
+#include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 
 #if defined(_WIN32)
@@ -20,7 +20,7 @@
 // Linux supported
 #elif defined(__APPLE__) && defined(__MACH__)
 // MacOS not supported yet but want to get to runtime
-#define PLATFORM_MOLTENVK
+#define PLATFORM_MACOS
 #else
 #error Platform not supported.
 #endif
@@ -45,7 +45,7 @@ VkSurfaceKHR surface;
 void *window;
 #endif // PLATFORM_MACOS
 
-bool be_noisy = false;
+bool be_noisy = true;
 bool enable_validation = false;
 bool dump_vulkan_calls = false;
 bool do_the_wrong_thing = false;
@@ -122,7 +122,7 @@ void print_implementation_information()
     vkEnumerateInstanceExtensionProperties(nullptr, &ext_count, exts.get());
     if(be_noisy) {
         printf("Vulkan instance extensions:\n");
-        for(int i = 0; i < ext_count; i++)
+        for(uint32_t i = 0; i < ext_count; i++)
             printf("    (%08X) %s\n", exts[i].specVersion, exts[i].extensionName);
     }
 }
@@ -134,7 +134,7 @@ void create_instance(VkInstance* instance)
 
     uint32_t glfw_reqd_extension_count;
     const char** glfw_reqd_extensions = glfwGetRequiredInstanceExtensions(&glfw_reqd_extension_count);
-    for(int i = 0; i < glfw_reqd_extension_count; i++) {
+    for(uint32_t i = 0; i < glfw_reqd_extension_count; i++) {
 	extension_set.insert(glfw_reqd_extensions[i]);
     }
 
@@ -145,14 +145,11 @@ void create_instance(VkInstance* instance)
     extension_set.insert("VK_KHR_xcb_surface");
 #elif defined(PLATFORM_MACOS)
     extension_set.insert("VK_MVK_macos_surface");
+    extension_set.insert(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
 #endif
 
     if(enable_validation) {
 	layer_set.insert("VK_LAYER_KHRONOS_validation");
-	// layer_set.insert("VK_LAYER_LUNARG_standard_validation");
-	// layer_set.insert("VK_LAYER_LUNARG_core_validation");
-	// layer_set.insert("VK_LAYER_LUNARG_parameter_validation");
-	// layer_set.insert("VK_LAYER_LUNARG_object_tracker");
     }
     if(dump_vulkan_calls) {
 	layer_set.insert("VK_LAYER_LUNARG_api_dump");
@@ -172,15 +169,16 @@ void create_instance(VkInstance* instance)
 	app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
 	app_info.pApplicationName = "triangle";
 	app_info.pEngineName = "triangle";
-	app_info.apiVersion = VK_API_VERSION_1_0;
+	app_info.apiVersion = VK_API_VERSION_1_2;
 
 	VkInstanceCreateInfo create = {};
 	create.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 	create.pNext = NULL;
+        create.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
 	create.pApplicationInfo = &app_info;
-	create.enabledExtensionCount = extensions.size();
+	create.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
 	create.ppEnabledExtensionNames = extensions.data();
-	create.enabledLayerCount = layers.size();
+	create.enabledLayerCount = static_cast<uint32_t>(layers.size());
 	create.ppEnabledLayerNames = layers.data();
 
 	VK_CHECK(vkCreateInstance(&create, nullptr, instance));
@@ -246,7 +244,7 @@ void print_device_information(VkPhysicalDevice physical_device)
     unique_ptr<VkExtensionProperties[]> exts(new VkExtensionProperties[ext_count]);
     vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &ext_count, exts.get());
     printf("    extensions:\n");
-    for(int i = 0; i < ext_count; i++)
+    for(uint32_t i = 0; i < ext_count; i++)
 	printf("        %s\n", exts[i].extensionName);
 
     // VkPhysicalDeviceLimits              limits;
@@ -257,7 +255,7 @@ void print_device_information(VkPhysicalDevice physical_device)
     unique_ptr<VkQueueFamilyProperties[]> queue_families(new VkQueueFamilyProperties[queue_family_count]);
     vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.get());
     if(be_noisy) {
-        for(int i = 0; i < queue_family_count; i++) {
+        for(uint32_t i = 0; i < queue_family_count; i++) {
             printf("queue %d:\n", i);
             printf("    flags:                       %04X\n", queue_families[i].queueFlags);
             printf("    queueCount:                  %d\n", queue_families[i].queueCount);
@@ -269,7 +267,7 @@ void print_device_information(VkPhysicalDevice physical_device)
         }
     }
 
-    for(int i = 0; i < memory_properties.memoryTypeCount; i++) {
+    for(uint32_t i = 0; i < memory_properties.memoryTypeCount; i++) {
         printf("memory type %d: flags ", i);
         print_memory_property_bits(memory_properties.memoryTypes[i].propertyFlags);
         printf("\n");
@@ -281,6 +279,14 @@ void create_device(VkPhysicalDevice physical_device, VkDevice* device)
     vector<const char*> extensions;
 
     extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+#if 0
+    extensions.insert(extensions.end(), {
+        VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+        VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
+        VK_KHR_RAY_QUERY_EXTENSION_NAME
+    });
+#endif
+
 
     VkDeviceQueueCreateInfo create_queues[1] = {};
     float queue_priorities[1] = {1.0f};
@@ -298,7 +304,7 @@ void create_device(VkPhysicalDevice physical_device, VkDevice* device)
     create.flags = 0;
     create.queueCreateInfoCount = 1;
     create.pQueueCreateInfos = create_queues;
-    create.enabledExtensionCount = extensions.size();
+    create.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
     create.ppEnabledExtensionNames = extensions.data();
     VK_CHECK(vkCreateDevice(physical_device, &create, nullptr, device));
 
@@ -526,7 +532,7 @@ void init_vulkan()
     vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, nullptr);
     unique_ptr<VkQueueFamilyProperties[]> queue_families(new VkQueueFamilyProperties[queue_family_count]);
     vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.get());
-    for(int i = 0; i < queue_family_count; i++) {
+    for(uint32_t i = 0; i < queue_family_count; i++) {
         if(queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
                 preferred_queue_family = i;
         }
@@ -610,6 +616,12 @@ int main(int argc, char **argv)
 	cerr << "GLFW window creation failed " << err << "\n";
         exit(EXIT_FAILURE);
     }
+	
+    // PFN_vkCmdTraceRaysKHR cmdTraceRaysKHR = (PFN_vkCmdTraceRaysKHR)vkGetInstanceProcAddr(instance, "vkCmdTraceRaysKHR");
+    // assert(cmdTraceRaysKHR);
+
+    printf("success!\n");
+    getchar();
 
     prepare_vulkan();
 
