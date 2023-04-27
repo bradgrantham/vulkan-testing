@@ -279,6 +279,7 @@ void create_device(VkPhysicalDevice physical_device, VkDevice* device)
     vector<const char*> extensions;
 
     extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    extensions.push_back("VK_KHR_portability_subset" /* VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME */);
 #if 0
     extensions.insert(extensions.end(), {
         VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
@@ -534,7 +535,7 @@ void init_vulkan()
     vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.get());
     for(uint32_t i = 0; i < queue_family_count; i++) {
         if(queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-                preferred_queue_family = i;
+            preferred_queue_family = i;
         }
     }
 
@@ -547,16 +548,6 @@ void init_vulkan()
         print_device_information(physical_device);
     }
     create_device(physical_device, &device);
-}
-
-void prepare_vulkan()
-{
-    create_vertex_buffers();
-    // create swapchain
-    // create descriptor sets
-    // load shader modules
-    // create pipeline layout
-    // create pipeline
 }
 
 void cleanup_vulkan()
@@ -588,6 +579,7 @@ static void error_callback(int error, const char* description)
     fprintf(stderr, "GLFW: %s\n", description);
 }
 
+
 int main(int argc, char **argv)
 {
     be_noisy = (getenv("BE_NOISY") != NULL);
@@ -606,6 +598,19 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
+#if 0
+
+The pseudocode for initializing Vulkan and drawing an indexed, textured triangle mesh is as follows:
+
+// Initialize Vulkan
+1. Create a VkInstance using vkCreateInstance
+2. Load all necessary instance-level extensions and validation layers
+3. Enumerate physical devices and select one to use
+4. Create a VkDevice for the chosen physical device
+5. Load all necessary device-level extensions
+
+#endif
+
     init_vulkan();
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
@@ -620,10 +625,38 @@ int main(int argc, char **argv)
     // PFN_vkCmdTraceRaysKHR cmdTraceRaysKHR = (PFN_vkCmdTraceRaysKHR)vkGetInstanceProcAddr(instance, "vkCmdTraceRaysKHR");
     // assert(cmdTraceRaysKHR);
 
-    printf("success!\n");
-    getchar();
+    printf("success creating device and window!\n");
 
-    prepare_vulkan();
+#if 0
+6. Create a VkQueue for command submission
+7. Create a VkCommandPool for allocating command buffers
+8. Create a VkSwapchain with desired parameters
+9. Allocate memory for vertex and index buffers
+10. Create a VkBuffer for each of them
+11. Create a VkImage for the texture
+12. Allocate device memory for it
+13. Create a VkImageView for the texture image
+14. Create a VkSampler for sampling the texture
+15. Upload data to the allocated memory
+
+// Draw an indexed, textured triangle mesh
+1. Create a VkRenderPass
+2. Create a VkFramebuffer with the swapchain images
+3. Create a VkPipelineLayout
+4. Create a VkGraphicsPipeline
+5. Begin a VkCommandBuffer
+6. Bind the graphics pipeline state
+7. Bind the vertex and index buffers
+8. Bind the texture resources
+9. Set viewport and scissor parameters
+10. Issue draw commands
+11. End the command buffer
+12. Submit the command buffer
+13. Present the rendered result
+
+#endif 
+
+    create_vertex_buffers();
 
     // while(1)
     {
@@ -637,3 +670,117 @@ int main(int argc, char **argv)
     cleanup_vulkan();
 }
 
+#if 0
+THis is from vkcube, functions piped through uniq
+vkCreateInstance                                create instance
+vkEnumeratePhysicalDevices                      what physical devices exist
+vkGetPhysicalDeviceProperties                   using this and the next 2 funcs, choose a physical device that meets our needs
+vkGetPhysicalDeviceQueueFamilyProperties
+vkGetPhysicalDeviceFeatures
+vkCreateWin32SurfaceKHR                         create a render target
+vkGetPhysicalDeviceSurfaceSupportKHR            repeat until we have the one we want that also meets other needs?
+vkCreateDevice                                  then create a device 
+vkGetPhysicalDeviceImageFormatProperties2       get image format props
+vkGetPhysicalDeviceQueueFamilyProperties        get device queue props, repeat until find one suitable
+vkGetDeviceQueue                                then get a queue for the device?
+vkGetPhysicalDeviceSurfaceFormatsKHR            get surface formats for the device to use to make swapchain
+vkCreateFence                                   create fences and semaphores
+vkCreateSemaphore                                       .....
+vkCreateFence                                   .....
+vkCreateSemaphore                                       .....
+vkGetPhysicalDeviceMemoryProperties             get properties for memory types and heaps
+vkGetPhysicalDeviceSurfaceCapabilitiesKHR       get what the surface is capable of
+vkGetPhysicalDeviceSurfacePresentModesKHR       get surface presentation modes e.g. immediate vs FIFO
+vkCreateSwapchainKHR                            create swapchain
+vkGetSwapchainImagesKHR                         get images backing the swapchain
+vkCreateImageView                               create ImageView that will be used to...?
+vkCreateCommandPool                             create command pool - command buffers are allocated from here?
+vkAllocateCommandBuffers                        allocate command buffers that are filled with commands
+vkBeginCommandBuffer                            open a command buffer
+vkCreateImage                                   create an image, no memory backs it yet
+vkGetImageMemoryRequirements                    get size of memory required for image
+vkAllocateMemory                                allocate it
+vkBindImageMemory                               bind image and memory together
+vkCreateImageView                               Create image view
+vkGetPhysicalDeviceFormatProperties             get info about the format on the device, like optimal tiling
+vkCreateImage                                   create image
+vkGetImageMemoryRequirements                    get size required to hold image
+vkAllocateMemory                                allocate some memory
+vkBindImageMemory                               bind that memory to the image
+vkGetImageSubresourceLayout                     get e.g. the offset, row pitch, etc for a MIP slice - not an object,
+                                                this describes how the bytes for the subresource are laid out in memory
+vkMapMemory                                     map VkMemory into memory
+vkUnmapMemory                                   unmap (was presumably filled in interim)
+vkCmdPipelineBarrier                            Insert a barrier to e.g. transition memory?
+vkCreateSampler                                 create image sampler
+vkCreateImageView                               create image view
+vkCreateBuffer                                  create a buffer... but for?
+vkGetBufferMemoryRequirements                   find out how big
+vkAllocateMemory                                allocate
+vkMapMemory                                     map (and fill)
+vkBindBufferMemory                              bind buffer to memory
+vkCreateBuffer                          
+vkGetBufferMemoryRequirements
+vkAllocateMemory
+vkMapMemory
+vkBindBufferMemory
+vkCreateBuffer
+vkGetBufferMemoryRequirements
+vkAllocateMemory
+vkMapMemory
+vkBindBufferMemory
+vkCreateDescriptorSetLayout                     a descriptor describes a piece of data that can be used by a shader
+vkCreatePipelineLayout                          a pipeline is based around the set of layouts to be used
+vkCreateRenderPass                              describes a series of framebuffer attachments, subpasses, and dependencies between subpasses (a la ordering to take advantage of ARM framebuffer storage)
+vkCreateShaderModule                            create a shader module from SPIR-V - compiled from Vulkan variant of GLSL - is vkcube's precompiled?
+vkCreatePipelineCache                           create a cache object for pipelines - vkcube populates its cache with nullptr
+vkCreateGraphicsPipelines                       create graphics pipelines - vkcube makes 1.  Contains all shaders for all stages; createinfos for the fixed-function parts of the pipeline like viewport, depth ops, multisample config; etc
+vkDestroyShaderModule                           "A shader module can be destroyed while pipelines created using its shaders are still in use."
+vkAllocateCommandBuffers                        allocate VkCommandBuffers from a command pool - vkcube makes 1 for each swapchain image
+vkCreateDescriptorPool                          create backing store for descriptor sets?
+vkAllocateDescriptorSets                        allocate descriptor sets within a pool - vkcube allocates 3; 1 for each swapchain
+vkUpdateDescriptorSets                          fill descriptor sets with data
+vkAllocateDescriptorSets                        #2
+vkUpdateDescriptorSets                          #2
+vkAllocateDescriptorSets                        #3
+vkUpdateDescriptorSets                          #3
+vkCreateFramebuffer                             create a framebuffer object which binds together ImageViews
+vkBeginCommandBuffer
+vkCmdBeginRenderPass
+vkCmdBindPipeline
+vkCmdBindDescriptorSets
+vkCmdSetViewport
+vkCmdSetScissor
+vkCmdDraw
+vkCmdEndRenderPass
+vkEndCommandBuffer
+vkBeginCommandBuffer
+vkCmdBeginRenderPass
+vkCmdBindPipeline
+vkCmdBindDescriptorSets
+vkCmdSetViewport
+vkCmdSetScissor
+vkCmdDraw
+vkCmdEndRenderPass
+vkEndCommandBuffer
+vkBeginCommandBuffer
+vkCmdBeginRenderPass
+vkCmdBindPipeline
+vkCmdBindDescriptorSets
+vkCmdSetViewport
+vkCmdSetScissor
+vkCmdDraw
+vkCmdEndRenderPass
+vkEndCommandBuffer
+vkCreateFence
+vkQueueSubmit
+vkWaitForFences
+vkFreeCommandBuffers
+vkDestroyFence
+vkWaitForFences
+vkResetFences
+vkAcquireNextImageKHR
+vkQueueSubmit
+vkQueuePresentKHR
+vkWaitForFences
+#endif
