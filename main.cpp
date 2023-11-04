@@ -174,7 +174,11 @@ void create_instance(VkInstance* instance)
 	VkInstanceCreateInfo create = {};
 	create.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 	create.pNext = NULL;
+#if defined(PLATFORM_MACOS)
         create.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
+#else
+        create.flags = 0;
+#endif
 	create.pApplicationInfo = &app_info;
 	create.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
 	create.ppEnabledExtensionNames = extensions.data();
@@ -638,8 +642,6 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
 6. Create a VkQueue for command submission
 7. Create a VkCommandPool for allocating command buffers
 8. Create a VkSwapchain with desired parameters
-9. Allocate memory for vertex and index buffers
-10. Create a VkBuffer for each of them
 11. Create a VkImage for the texture
 12. Allocate device memory for it
 13. Create a VkImageView for the texture image
@@ -651,6 +653,19 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
 2. Create a VkFramebuffer with the swapchain images
 3. Create a VkPipelineLayout
 4. Create a VkGraphicsPipeline
+#endif
+#if 0
+9. Allocate memory for vertex and index buffers
+10. Create a VkBuffer for each of them
+#endif
+
+    create_vertex_buffers();
+    printf("success creating buffers!\n");
+
+    // while(1)
+    {
+#if 0
+
 5. Begin a VkCommandBuffer
 6. Bind the graphics pipeline state
 7. Bind the vertex and index buffers
@@ -663,16 +678,21 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
 
 #endif 
 
-    create_vertex_buffers();
-    printf("success creating buffers!\n");
+#if 0
+        uint32_t indices[] = {0};
+        VkPresentInfoKHR present {
+            .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .pNext = nullptr,
+            .waitSemaphoreCount = 0,
+            .pWaitSemaphores = nullptr,
+            .swapchainCount = 1,
+            .pSwapchains = swapchain,
+            .pImageIndices = indices,
+            .pResults = nullptr;
+        };
+        VK_CHECK(vkQueuePresentKHR(queue, present));
+#endif
 
-    // while(1)
-    {
-        // start command buffer
-        // enqueue draw command
-        // end command buffer
-        // enqueue command buffer for graphics
-        // copy to present
     }
 
     cleanup_vulkan();
