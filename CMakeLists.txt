@@ -20,5 +20,5 @@ target_link_libraries(vulkan_test glfw)
 target_link_libraries(vulkan_test ${Vulkan_LIBRARIES})
 target_include_directories(vulkan_test PRIVATE ${Vulkan_INCLUDE_DIRS})
 # target_include_directories(vulkan_test PRIVATE ${GLFW_INCLUDE_DIR})
-set_property(TARGET vulkan_test PROPERTY CXX_STANDARD 17)
+set_property(TARGET vulkan_test PROPERTY CXX_STANDARD 20)
 

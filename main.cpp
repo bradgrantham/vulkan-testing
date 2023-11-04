@@ -102,7 +102,8 @@ std::map<VkResult, std::string> vkresult_name_map =
 #define VK_CHECK(f) \
 { \
     VkResult result = (f); \
-    if(result != VK_SUCCESS) { \
+    static const std::set<VkResult> okay{VK_SUCCESS, VK_SUBOPTIMAL_KHR, VK_THREAD_IDLE_KHR, VK_THREAD_DONE_KHR, VK_OPERATION_DEFERRED_KHR, VK_OPERATION_NOT_DEFERRED_KHR}; \
+    if(!okay.contains(result)) { \
 	if(vkresult_name_map.count(f) > 0) { \
 	    std::cerr << "VkResult from " STR(f) " was " << vkresult_name_map[result] << " at line " << __LINE__ << "\n"; \
 	} else { \
@@ -590,6 +591,24 @@ static void error_callback(int error, const char* description)
     fprintf(stderr, "GLFW: %s\n", description);
 }
 
+// From vkcube.cpp
+static VkSurfaceFormatKHR pick_surface_format(const VkSurfaceFormatKHR *surfaceFormats, uint32_t count) {
+    // Prefer non-SRGB formats...
+    for (uint32_t i = 0; i < count; i++) {
+        const VkFormat format = surfaceFormats[i].format;
+
+        if (format == VK_FORMAT_R8G8B8A8_UNORM || format == VK_FORMAT_B8G8R8A8_UNORM ||
+            format == VK_FORMAT_A2B10G10R10_UNORM_PACK32 || format == VK_FORMAT_A2R10G10B10_UNORM_PACK32 ||
+            format == VK_FORMAT_R16G16B16A16_SFLOAT) {
+            return surfaceFormats[i];
+        }
+    }
+
+    printf("Can't find our preferred formats... Falling back to first exposed format. Rendering may be incorrect.\n");
+
+    assert(count >= 1);
+    return surfaceFormats[0];
+}
 
 int main(int argc, char **argv)
 {
@@ -619,6 +638,8 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
 3. Enumerate physical devices and select one to use
 4. Create a VkDevice for the chosen physical device
 5. Load all necessary device-level extensions
+6. Create a VkQueue for command submission
+7. Create a VkCommandPool for allocating command buffers
 
 #endif
 
@@ -638,10 +659,47 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
 
     printf("success creating device and window!\n");
 
+    int window_width, window_height;
+    glfwGetWindowSize(window, &window_width, &window_height);
+
+    uint32_t formatCount;
+    VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, NULL));
+    std::unique_ptr<VkSurfaceFormatKHR[]> surfaceFormats(new VkSurfaceFormatKHR[formatCount]);
+    VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, surfaceFormats.get()));
+    VkSurfaceFormatKHR surfaceFormat = pick_surface_format(surfaceFormats.get(), formatCount);
+    VkFormat chosenFormat = surfaceFormat.format;
+    VkColorSpaceKHR chosenColorSpace = surfaceFormat.colorSpace;
+
+    VkPresentModeKHR swapchainPresentMode = VK_PRESENT_MODE_FIFO_KHR;
+    // TODO verify present mode with vkGetPhysicalDeviceSurfacePresentModesKHR
+
+// 8. Create a VkSwapchain with desired parameters
+    uint32_t swapchainImageCount = 3;
+    VkSwapchainCreateInfoKHR create = {
+        .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
+        .pNext = nullptr,
+        .surface = surface,
+        .minImageCount = swapchainImageCount,
+        .imageFormat = chosenFormat,
+        .imageColorSpace = chosenColorSpace,
+        .imageExtent = { static_cast<uint32_t>(window_width), static_cast<uint32_t>(window_height) },
+        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
+        .compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+        .imageArrayLayers = 1,
+        .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
+        .queueFamilyIndexCount = 0,
+        .pQueueFamilyIndices = NULL,
+        .presentMode = swapchainPresentMode,
+        .oldSwapchain = VK_NULL_HANDLE, // oldSwapchain, // if we are recreating swapchain for when the window changes
+        .clipped = true,
+    };
+    VkSwapchainKHR swapchain;
+    VK_CHECK(vkCreateSwapchainKHR(device, &create, nullptr, &swapchain));
+
+    printf("success creating swapchain!\n");
+
 #if 0
-6. Create a VkQueue for command submission
-7. Create a VkCommandPool for allocating command buffers
-8. Create a VkSwapchain with desired parameters
 11. Create a VkImage for the texture
 12. Allocate device memory for it
 13. Create a VkImageView for the texture image
@@ -662,6 +720,8 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     create_vertex_buffers();
     printf("success creating buffers!\n");
 
+    uint32_t index = 0;
+
     // while(1)
     {
 #if 0
@@ -674,24 +734,23 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
 10. Issue draw commands
 11. End the command buffer
 12. Submit the command buffer
-13. Present the rendered result
 
 #endif 
 
-#if 0
-        uint32_t indices[] = {0};
+        uint32_t indices[] = {index};
+        index = (index + 1) % swapchainImageCount;
         VkPresentInfoKHR present {
             .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
             .pNext = nullptr,
             .waitSemaphoreCount = 0,
             .pWaitSemaphores = nullptr,
             .swapchainCount = 1,
-            .pSwapchains = swapchain,
+            .pSwapchains = &swapchain,
             .pImageIndices = indices,
-            .pResults = nullptr;
+            .pResults = nullptr,
         };
-        VK_CHECK(vkQueuePresentKHR(queue, present));
-#endif
+// 13. Present the rendered result
+        VK_CHECK(vkQueuePresentKHR(queue, &present));
 
     }
 
