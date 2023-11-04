@@ -320,11 +320,6 @@ void create_device(VkPhysicalDevice physical_device, VkDevice* device)
 
     vkGetDeviceQueue(*device, preferred_queue_family, 0, &queue);
 
-    VkCommandPoolCreateInfo create_command_pool = {};
-    create_command_pool.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    create_command_pool.flags = 0;
-    create_command_pool.queueFamilyIndex = preferred_queue_family;
-    VK_CHECK(vkCreateCommandPool(*device, &create_command_pool, nullptr, &command_pool));
 }
 
 // Sascha Willem's 
@@ -394,17 +389,17 @@ void flushCommandBuffer(VkCommandBuffer commandBuffer)
     vkFreeCommandBuffers(device, command_pool, 1, &commandBuffer);
 }
 
+// geometry data
+static vertex vertices[3] = {
+    {{0, 0, 0}, {1, 0, 0}},
+    {{1, 0, 0}, {0, 1, 0}},
+    {{0, 1, 0}, {0, 0, 1}},
+};
+static uint32_t indices[3] = {0, 1, 2}; 
+int triangleCount = 1;
 
 void create_vertex_buffers()
 {
-    // geometry data
-    static vertex vertices[3] = {
-	{{0, 0, 0}, {1, 0, 0}},
-	{{1, 0, 0}, {0, 1, 0}},
-	{{0, 1, 0}, {0, 0, 1}},
-    };
-    static uint32_t indices[3] = {0, 1, 2}; 
-
     // host-writable memory and buffers
     buffer vertex_staging;
     buffer index_staging;
@@ -699,12 +694,27 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
 
     printf("success creating swapchain!\n");
 
+    VkCommandPoolCreateInfo create_command_pool = {};
+    create_command_pool.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    create_command_pool.flags = 0;
+    create_command_pool.queueFamilyIndex = preferred_queue_family;
+    VK_CHECK(vkCreateCommandPool(device, &create_command_pool, nullptr, &command_pool));
+
+    const VkCommandBufferAllocateInfo allocate = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .pNext = NULL,
+        .commandPool = command_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
+    std::vector<VkCommandBuffer> commandBuffers(swapchainImageCount);
+    for (int i = 0; i < swapchainImageCount; i++) {
+        // Can't I just make commandBufferCount be swapchainImageCount here?
+        VK_CHECK(vkAllocateCommandBuffers(device, &allocate, &commandBuffers[i]));
+    }
+
+
 #if 0
-11. Create a VkImage for the texture
-12. Allocate device memory for it
-13. Create a VkImageView for the texture image
-14. Create a VkSampler for sampling the texture
-15. Upload data to the allocated memory
 
 // Draw an indexed, textured triangle mesh
 1. Create a VkRenderPass
@@ -724,19 +734,42 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
 
     // while(1)
     {
-#if 0
 
-5. Begin a VkCommandBuffer
+#if 0
+5. ./ Begin a VkCommandBuffer
 6. Bind the graphics pipeline state
 7. Bind the vertex and index buffers
 8. Bind the texture resources
 9. Set viewport and scissor parameters
-10. Issue draw commands
-11. End the command buffer
+10. ./ Issue draw commands
+11. ./ End the command buffer
 12. Submit the command buffer
-
 #endif 
 
+        VkCommandBufferBeginInfo begin = {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+            .pNext = nullptr,
+            .flags = 0, // VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+            .pInheritanceInfo = nullptr,
+        };
+        VK_CHECK(vkBeginCommandBuffer(commandBuffers[index], &begin));
+        vkCmdDrawIndexed(commandBuffers[index], triangleCount * 3, 1, 0, 0, 0);
+        VK_CHECK(vkEndCommandBuffer(commandBuffers[index]));
+
+        VkSubmitInfo submit = {
+            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+            .pNext = nullptr,
+            .waitSemaphoreCount = 0,
+            .pWaitSemaphores = nullptr,
+            .pWaitDstStageMask = nullptr,
+            .commandBufferCount = 1,
+            .pCommandBuffers = &commandBuffers[index],
+            .signalSemaphoreCount = 0,
+            .pSignalSemaphores = nullptr,
+        };
+        VK_CHECK(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE));
+
+// 13. Present the rendered result
         uint32_t indices[] = {index};
         index = (index + 1) % swapchainImageCount;
         VkPresentInfoKHR present {
@@ -749,10 +782,10 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
             .pImageIndices = indices,
             .pResults = nullptr,
         };
-// 13. Present the rendered result
         VK_CHECK(vkQueuePresentKHR(queue, &present));
 
     }
+    printf("presented?!\n");
 
     cleanup_vulkan();
 }
