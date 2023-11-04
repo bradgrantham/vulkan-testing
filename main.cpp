@@ -3,6 +3,7 @@
 #include <memory>
 #include <vector>
 #include <map>
+#include <unordered_map>
 #include <set>
 #include <string>
 
@@ -28,8 +29,6 @@
 #define DEFAULT_FENCE_TIMEOUT 100000000000
 
 // Styled somewhat after Sascha Willem's triangle
-
-using namespace std;
 
 VkInstance instance;
 VkPhysicalDevice physical_device;
@@ -82,13 +81,13 @@ VkDescriptorSet descriptor_set;
 
 VkSemaphore present_complete;
 VkSemaphore render_complete;
-std::Vector<VkFence> wait_fences;
+std::vector<VkFence> wait_fences;
 
 #endif
 
 #define STR(f) #f
 
-map<VkResult, string> vkresult_name_map =
+std::unordered_map<VkResult, std::string> vkresult_name_map =
 {
     {VK_ERROR_OUT_OF_HOST_MEMORY, "OUT_OF_HOST_MEMORY"},
     {VK_ERROR_OUT_OF_DEVICE_MEMORY, "OUT_OF_DEVICE_MEMORY"},
@@ -105,10 +104,10 @@ map<VkResult, string> vkresult_name_map =
     VkResult result = (f); \
     if(result != VK_SUCCESS) { \
 	if(vkresult_name_map.count(f) > 0) { \
-	    cerr << "VkResult from " STR(f) " was " << vkresult_name_map[result] << " at line " << __LINE__ << "\n"; \
-	} \
-	else \
-	    cerr << "VkResult from " STR(f) " was " << result << " at line " << __LINE__ << "\n"; \
+	    std::cerr << "VkResult from " STR(f) " was " << vkresult_name_map[result] << " at line " << __LINE__ << "\n"; \
+	} else { \
+	    std::cerr << "VkResult from " STR(f) " was " << result << " at line " << __LINE__ << "\n"; \
+        } \
 	exit(EXIT_FAILURE); \
     } \
 }
@@ -118,25 +117,24 @@ void print_implementation_information()
 {
     uint32_t ext_count;
     vkEnumerateInstanceExtensionProperties(nullptr, &ext_count, nullptr);
-    unique_ptr<VkExtensionProperties[]> exts(new VkExtensionProperties[ext_count]);
+    std::unique_ptr<VkExtensionProperties[]> exts(new VkExtensionProperties[ext_count]);
     vkEnumerateInstanceExtensionProperties(nullptr, &ext_count, exts.get());
     if(be_noisy) {
         printf("Vulkan instance extensions:\n");
-        for(uint32_t i = 0; i < ext_count; i++)
-            printf("    (%08X) %s\n", exts[i].specVersion, exts[i].extensionName);
+        for(uint32_t i = 0; i < ext_count; i++) {
+            printf("\t%s, %08X\n", exts[i].extensionName, exts[i].specVersion);
+        }
     }
 }
 
 void create_instance(VkInstance* instance)
 {
-    set<string> extension_set;
-    set<string> layer_set;
+    std::set<std::string> extension_set;
+    std::set<std::string> layer_set;
 
     uint32_t glfw_reqd_extension_count;
     const char** glfw_reqd_extensions = glfwGetRequiredInstanceExtensions(&glfw_reqd_extension_count);
-    for(uint32_t i = 0; i < glfw_reqd_extension_count; i++) {
-	extension_set.insert(glfw_reqd_extensions[i]);
-    }
+    extension_set.insert(glfw_reqd_extensions, glfw_reqd_extensions + glfw_reqd_extension_count);
 
     extension_set.insert(VK_KHR_SURFACE_EXTENSION_NAME);
 #if defined(PLATFORM_WINDOWS)
@@ -155,15 +153,17 @@ void create_instance(VkInstance* instance)
 	layer_set.insert("VK_LAYER_LUNARG_api_dump");
     }
 
-    {
-	vector<const char*> extensions;
-	vector<const char*> layers;
-	// Careful - only valid for duration of sets where contents have not changed
-	for(auto& s: extension_set)
-	    extensions.push_back(s.c_str());
+    [&](const std::set<std::string> &extension_set, const std::set<std::string> &layer_set) {
+        std::vector<const char*> extensions;
+        std::vector<const char*> layers;
 
-	for(auto& s: layer_set)
+	for(auto& s: extension_set) {
+	    extensions.push_back(s.c_str());
+        }
+
+	for(auto& s: layer_set) {
 	    layers.push_back(s.c_str());
+        }
 
 	VkApplicationInfo app_info = {};
 	app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
@@ -182,7 +182,7 @@ void create_instance(VkInstance* instance)
 	create.ppEnabledLayerNames = layers.data();
 
 	VK_CHECK(vkCreateInstance(&create, nullptr, instance));
-    }
+    }(extension_set, layer_set);
 }
 
 void choose_physical_device(VkInstance instance, VkPhysicalDevice* physical_device)
@@ -190,10 +190,10 @@ void choose_physical_device(VkInstance instance, VkPhysicalDevice* physical_devi
     uint32_t gpu_count = 0;
     VK_CHECK(vkEnumeratePhysicalDevices(instance, &gpu_count, nullptr));
     if(be_noisy) {
-        cerr << gpu_count << " gpus enumerated\n";
+        std::cerr << gpu_count << " gpus enumerated\n";
     }
     VkPhysicalDevice physical_devices[32];
-    gpu_count = min(32u, gpu_count);
+    gpu_count = std::min(32u, gpu_count);
     VK_CHECK(vkEnumeratePhysicalDevices(instance, &gpu_count, physical_devices));
     *physical_device = physical_devices[0];
 }
@@ -207,7 +207,7 @@ const char* device_types[] = {
     "unknown",
 };
 
-map<uint32_t, string> memory_property_bit_name_map = {
+std::map<uint32_t, std::string> memory_property_bit_name_map = {
     {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "DEVICE_LOCAL"},
     {VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, "HOST_VISIBLE"},
     {VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, "HOST_COHERENT"},
@@ -218,11 +218,12 @@ map<uint32_t, string> memory_property_bit_name_map = {
 void print_memory_property_bits(VkMemoryPropertyFlags flags)
 {
     bool add_or = false;
-    for(auto& bit : memory_property_bit_name_map)
+    for(auto& bit : memory_property_bit_name_map) {
 	if(flags & bit.first) {
 	    printf("%s%s", add_or ? " | " : "", bit.second.c_str());
 	    add_or = true;
 	}
+    }
 }
 
 void print_device_information(VkPhysicalDevice physical_device)
@@ -236,23 +237,24 @@ void print_device_information(VkPhysicalDevice physical_device)
     printf("    vendor  %X\n", properties.vendorID);
     printf("    device  %X\n", properties.deviceID);
     printf("    name    %s\n", properties.deviceName);
-    printf("    type    %s\n", device_types[min(5, (int)properties.deviceType)]);
+    printf("    type    %s\n", device_types[std::min(5, (int)properties.deviceType)]);
 
     uint32_t ext_count;
 
     vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &ext_count, nullptr);
-    unique_ptr<VkExtensionProperties[]> exts(new VkExtensionProperties[ext_count]);
+    std::unique_ptr<VkExtensionProperties[]> exts(new VkExtensionProperties[ext_count]);
     vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &ext_count, exts.get());
     printf("    extensions:\n");
-    for(uint32_t i = 0; i < ext_count; i++)
+    for(uint32_t i = 0; i < ext_count; i++) {
 	printf("        %s\n", exts[i].extensionName);
+    }
 
     // VkPhysicalDeviceLimits              limits;
     // VkPhysicalDeviceSparseProperties    sparseProperties;
     //
     uint32_t queue_family_count;
     vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, nullptr);
-    unique_ptr<VkQueueFamilyProperties[]> queue_families(new VkQueueFamilyProperties[queue_family_count]);
+    std::unique_ptr<VkQueueFamilyProperties[]> queue_families(new VkQueueFamilyProperties[queue_family_count]);
     vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.get());
     if(be_noisy) {
         for(uint32_t i = 0; i < queue_family_count; i++) {
@@ -276,10 +278,12 @@ void print_device_information(VkPhysicalDevice physical_device)
 
 void create_device(VkPhysicalDevice physical_device, VkDevice* device)
 {
-    vector<const char*> extensions;
+    std::vector<const char*> extensions;
 
     extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+#ifdef PLATFORM_MACOS
     extensions.push_back("VK_KHR_portability_subset" /* VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME */);
+#endif
 #if 0
     extensions.insert(extensions.end(), {
         VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
@@ -322,10 +326,13 @@ void create_device(VkPhysicalDevice physical_device, VkDevice* device)
 uint32_t getMemoryTypeIndex(uint32_t type_bits, VkMemoryPropertyFlags properties)
 {
     // Iterate over all memory types available for the device used in this example
-    for (uint32_t i = 0; i < memory_properties.memoryTypeCount; i++)
-	if (type_bits & (1 << i))
-	    if ((memory_properties.memoryTypes[i].propertyFlags & properties) == properties)
+    for (uint32_t i = 0; i < memory_properties.memoryTypeCount; i++) {
+	if (type_bits & (1 << i)) {
+	    if ((memory_properties.memoryTypes[i].propertyFlags & properties) == properties) {
 		return i;
+            }
+        }
+    }
 
     throw "Could not find a suitable memory type!";
 }
@@ -531,7 +538,7 @@ void init_vulkan()
 
     uint32_t queue_family_count;
     vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, nullptr);
-    unique_ptr<VkQueueFamilyProperties[]> queue_families(new VkQueueFamilyProperties[queue_family_count]);
+    std::unique_ptr<VkQueueFamilyProperties[]> queue_families(new VkQueueFamilyProperties[queue_family_count]);
     vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.get());
     for(uint32_t i = 0; i < queue_family_count; i++) {
         if(queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
@@ -540,7 +547,7 @@ void init_vulkan()
     }
 
     if(preferred_queue_family == NO_QUEUE_FAMILY) {
-	cerr << "no desired queue family was found\n";
+	std::cerr << "no desired queue family was found\n";
 	exit(EXIT_FAILURE);
     }
 
@@ -589,12 +596,12 @@ int main(int argc, char **argv)
     glfwSetErrorCallback(error_callback);
 
     if(!glfwInit()) {
-	cerr << "GLFW initialization failed.\n";
+	std::cerr << "GLFW initialization failed.\n";
         exit(EXIT_FAILURE);
     }
 
     if (!glfwVulkanSupported()) {
-	cerr << "GLFW reports Vulkan is not supported\n";
+	std::cerr << "GLFW reports Vulkan is not supported\n";
         exit(EXIT_FAILURE);
     }
 
@@ -618,7 +625,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
 
     VkResult err = glfwCreateWindowSurface(instance, window, NULL, &surface);
     if (err) {
-	cerr << "GLFW window creation failed " << err << "\n";
+	std::cerr << "GLFW window creation failed " << err << "\n";
         exit(EXIT_FAILURE);
     }
 	
@@ -657,6 +664,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
 #endif 
 
     create_vertex_buffers();
+    printf("success creating buffers!\n");
 
     // while(1)
     {
@@ -675,7 +683,7 @@ THis is from vkcube, functions piped through uniq
 vkCreateInstance                                create instance
 vkEnumeratePhysicalDevices                      what physical devices exist
 vkGetPhysicalDeviceProperties                   using this and the next 2 funcs, choose a physical device that meets our needs
-vkGetPhysicalDeviceQueueFamilyProperties
+vkGetPhysicalDeviceQueueFamilyProperties        
 vkGetPhysicalDeviceFeatures
 vkCreateWin32SurfaceKHR                         create a render target
 vkGetPhysicalDeviceSurfaceSupportKHR            repeat until we have the one we want that also meets other needs?
@@ -684,10 +692,10 @@ vkGetPhysicalDeviceImageFormatProperties2       get image format props
 vkGetPhysicalDeviceQueueFamilyProperties        get device queue props, repeat until find one suitable
 vkGetDeviceQueue                                then get a queue for the device?
 vkGetPhysicalDeviceSurfaceFormatsKHR            get surface formats for the device to use to make swapchain
-vkCreateFence                                   create fences and semaphores
-vkCreateSemaphore                                       .....
-vkCreateFence                                   .....
-vkCreateSemaphore                                       .....
+vkCreateFence                                   create fence
+vkCreateSemaphore                               create sema
+vkCreateFence                                   create fence
+vkCreateSemaphore                               create sema
 vkGetPhysicalDeviceMemoryProperties             get properties for memory types and heaps
 vkGetPhysicalDeviceSurfaceCapabilitiesKHR       get what the surface is capable of
 vkGetPhysicalDeviceSurfacePresentModesKHR       get surface presentation modes e.g. immediate vs FIFO
@@ -719,16 +727,16 @@ vkGetBufferMemoryRequirements                   find out how big
 vkAllocateMemory                                allocate
 vkMapMemory                                     map (and fill)
 vkBindBufferMemory                              bind buffer to memory
-vkCreateBuffer                          
-vkGetBufferMemoryRequirements
-vkAllocateMemory
-vkMapMemory
-vkBindBufferMemory
-vkCreateBuffer
-vkGetBufferMemoryRequirements
-vkAllocateMemory
-vkMapMemory
-vkBindBufferMemory
+vkCreateBuffer                                  create buffer
+vkGetBufferMemoryRequirements                   get size, alignment and memory type
+vkAllocateMemory                                allocate memory using those params
+vkMapMemory                                     map memory
+vkBindBufferMemory                              bind buffer to that memory
+vkCreateBuffer                                  create buffer
+vkGetBufferMemoryRequirements                   get size, alignment and memory type
+vkAllocateMemory                                allocate memory using those params
+vkMapMemory                                     map memory
+vkBindBufferMemory                              bind buffer to that memory, probably
 vkCreateDescriptorSetLayout                     a descriptor describes a piece of data that can be used by a shader
 vkCreatePipelineLayout                          a pipeline is based around the set of layouts to be used
 vkCreateRenderPass                              describes a series of framebuffer attachments, subpasses, and dependencies between subpasses (a la ordering to take advantage of ARM framebuffer storage)
@@ -745,42 +753,24 @@ vkUpdateDescriptorSets                          #2
 vkAllocateDescriptorSets                        #3
 vkUpdateDescriptorSets                          #3
 vkCreateFramebuffer                             create a framebuffer object which binds together ImageViews
-vkBeginCommandBuffer
-vkCmdBeginRenderPass
-vkCmdBindPipeline
-vkCmdBindDescriptorSets
-vkCmdSetViewport
-vkCmdSetScissor
-vkCmdDraw
-vkCmdEndRenderPass
-vkEndCommandBuffer
-vkBeginCommandBuffer
-vkCmdBeginRenderPass
-vkCmdBindPipeline
-vkCmdBindDescriptorSets
-vkCmdSetViewport
-vkCmdSetScissor
-vkCmdDraw
-vkCmdEndRenderPass
-vkEndCommandBuffer
-vkBeginCommandBuffer
-vkCmdBeginRenderPass
-vkCmdBindPipeline
-vkCmdBindDescriptorSets
-vkCmdSetViewport
-vkCmdSetScissor
-vkCmdDraw
-vkCmdEndRenderPass
-vkEndCommandBuffer
-vkCreateFence
-vkQueueSubmit
-vkWaitForFences
-vkFreeCommandBuffers
-vkDestroyFence
-vkWaitForFences
-vkResetFences
-vkAcquireNextImageKHR
-vkQueueSubmit
-vkQueuePresentKHR
-vkWaitForFences
+vkBeginCommandBuffer                            begin a command buffer
+vkCmdBeginRenderPass                            begin a "render pass"
+vkCmdBindPipeline                               bind a pipeline (e.g. from vkCreateGraphicsPipelines)
+vkCmdBindDescriptorSets                         bind descriptor sets (filled/updated with vkUpdateDescriptorSets)
+vkCmdSetViewport                                set drawing viewport
+vkCmdSetScissor                                 set drawing scissor
+vkCmdDraw                                       draw some primitives
+vkCmdEndRenderPass                              end a "render pass"
+vkEndCommandBuffer                              end that command buffer
+vkCreateFence                                   create a fence
+vkQueueSubmit                                   submit all the stuff created in a command buffer including signaling the fence just created
+vkWaitForFences                                 wait on those fences
+vkFreeCommandBuffers                            free command buffers
+vkDestroyFence                                  destroy fence we just created
+vkWaitForFences                                 wait on frame fences but none has been issued at this point
+vkResetFences                                   reset those fences
+vkAcquireNextImageKHR                           acquire the index of the next image that is available
+vkQueueSubmit                                   submit command buffers to queue
+vkQueuePresentKHR                               queue a present of an image
+vkWaitForFences                                 wait for frame fences
 #endif
