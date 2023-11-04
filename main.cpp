@@ -87,7 +87,7 @@ std::vector<VkFence> wait_fences;
 
 #define STR(f) #f
 
-std::unordered_map<VkResult, std::string> vkresult_name_map =
+std::map<VkResult, std::string> vkresult_name_map =
 {
     {VK_ERROR_OUT_OF_HOST_MEMORY, "OUT_OF_HOST_MEMORY"},
     {VK_ERROR_OUT_OF_DEVICE_MEMORY, "OUT_OF_DEVICE_MEMORY"},
