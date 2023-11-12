@@ -174,7 +174,7 @@ void create_instance(VkInstance* instance)
 
 	VkInstanceCreateInfo create = {};
 	create.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-	create.pNext = NULL;
+	create.pNext = nullptr;
 #if defined(PLATFORM_MACOS)
         create.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
 #else
@@ -286,6 +286,7 @@ void create_device(VkPhysicalDevice physical_device, VkDevice* device)
     std::vector<const char*> extensions;
 
     extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+    extensions.push_back("VK_NV_glsl_shader");
 #ifdef PLATFORM_MACOS
     extensions.push_back("VK_KHR_portability_subset" /* VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME */);
 #endif
@@ -301,7 +302,7 @@ void create_device(VkPhysicalDevice physical_device, VkDevice* device)
     VkDeviceQueueCreateInfo create_queues[1] = {};
     float queue_priorities[1] = {1.0f};
     create_queues[0].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    create_queues[0].pNext = NULL;
+    create_queues[0].pNext = nullptr;
     create_queues[0].flags = 0;
     create_queues[0].queueFamilyIndex = preferred_queue_family;
     create_queues[0].queueCount = 1;
@@ -310,7 +311,7 @@ void create_device(VkPhysicalDevice physical_device, VkDevice* device)
     VkDeviceCreateInfo create = {};
 
     create.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    create.pNext = NULL;
+    create.pNext = nullptr;
     create.flags = 0;
     create.queueCreateInfoCount = 1;
     create.pQueueCreateInfos = create_queues;
@@ -607,9 +608,9 @@ static VkSurfaceFormatKHR pick_surface_format(const VkSurfaceFormatKHR *surfaceF
 
 int main(int argc, char **argv)
 {
-    be_noisy = (getenv("BE_NOISY") != NULL);
-    enable_validation = (getenv("VALIDATE") != NULL);
-    do_the_wrong_thing = (getenv("BE_WRONG") != NULL);
+    be_noisy = (getenv("BE_NOISY") != nullptr);
+    enable_validation = (getenv("VALIDATE") != nullptr);
+    do_the_wrong_thing = (getenv("BE_WRONG") != nullptr);
 
     glfwSetErrorCallback(error_callback);
 
@@ -641,9 +642,9 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     init_vulkan();
 
     glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(512, 512, "vulkan test", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(512, 512, "vulkan test", nullptr, nullptr);
 
-    VkResult err = glfwCreateWindowSurface(instance, window, NULL, &surface);
+    VkResult err = glfwCreateWindowSurface(instance, window, nullptr, &surface);
     if (err) {
 	std::cerr << "GLFW window creation failed " << err << "\n";
         exit(EXIT_FAILURE);
@@ -654,11 +655,11 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
 
     printf("success creating device and window!\n");
 
-    int window_width, window_height;
-    glfwGetWindowSize(window, &window_width, &window_height);
+    int windowWidth, windowHeight;
+    glfwGetWindowSize(window, &windowWidth, &windowHeight);
 
     uint32_t formatCount;
-    VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, NULL));
+    VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, nullptr));
     std::unique_ptr<VkSurfaceFormatKHR[]> surfaceFormats(new VkSurfaceFormatKHR[formatCount]);
     VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, surfaceFormats.get()));
     VkSurfaceFormatKHR surfaceFormat = pick_surface_format(surfaceFormats.get(), formatCount);
@@ -677,14 +678,14 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .minImageCount = swapchainImageCount,
         .imageFormat = chosenFormat,
         .imageColorSpace = chosenColorSpace,
-        .imageExtent = { static_cast<uint32_t>(window_width), static_cast<uint32_t>(window_height) },
+        .imageExtent = { static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight) },
         .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
         .preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
         .compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
         .imageArrayLayers = 1,
         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = 0,
-        .pQueueFamilyIndices = NULL,
+        .pQueueFamilyIndices = nullptr,
         .presentMode = swapchainPresentMode,
         .oldSwapchain = VK_NULL_HANDLE, // oldSwapchain, // if we are recreating swapchain for when the window changes
         .clipped = true,
@@ -702,7 +703,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
 
     const VkCommandBufferAllocateInfo allocate = {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .pNext = NULL,
+        .pNext = nullptr,
         .commandPool = command_pool,
         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = 1,
@@ -713,15 +714,185 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         VK_CHECK(vkAllocateCommandBuffers(device, &allocate, &commandBuffers[i]));
     }
 
-
 #if 0
-
-// Draw an indexed, textured triangle mesh
 1. Create a VkRenderPass
 2. Create a VkFramebuffer with the swapchain images
 3. Create a VkPipelineLayout
 4. Create a VkGraphicsPipeline
 #endif
+
+    uint32_t swapchainImageCountReturned;
+    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCountReturned, nullptr));
+    assert(swapchainImageCountReturned == swapchainImageCount);
+    std::unique_ptr<VkImage[]> swapchainImages(new VkImage[swapchainImageCount]);
+    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCount, swapchainImages.get()));
+
+    VkFormat depthFormat = VK_FORMAT_D16_UNORM;
+    VkImageCreateInfo createDepthInfo = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .pNext = NULL,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = depthFormat,
+        .extent = {static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight), 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+        .flags = 0,
+    };
+    VkImage depthImage;
+    VK_CHECK(vkCreateImage(device, &createDepthInfo, nullptr, &depthImage));
+    VkMemoryRequirements imageMemReqs;
+    vkGetImageMemoryRequirements(device, depthImage, &imageMemReqs);
+    uint32_t memoryTypeIndex = getMemoryTypeIndex(imageMemReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VkDeviceMemory depthImageMemory;
+    VkMemoryAllocateInfo depthAllocate = {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .pNext = nullptr,
+        .allocationSize = imageMemReqs.size,
+        .memoryTypeIndex = memoryTypeIndex,
+    };
+    VK_CHECK(vkAllocateMemory(device, &depthAllocate, nullptr, &depthImageMemory));
+    VK_CHECK(vkBindImageMemory(device, depthImage, depthImageMemory, 0));
+    // bind image to memory
+
+    std::vector<VkImageView> colorImageViews(swapchainImageCount);
+    for(int i = 0; i < swapchainImageCount; i++) {
+        VkImageViewCreateInfo colorImageViewCreate = {
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .image = swapchainImages[i],
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = chosenFormat,
+            .components = {VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY},
+            .subresourceRange = {
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1
+            },
+        };
+        VK_CHECK(vkCreateImageView(device, &colorImageViewCreate, nullptr, &colorImageViews[i]));
+    }
+    VkImageView depthImageView;
+    VkImageViewCreateInfo depthImageViewCreate = {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .image = depthImage,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = depthFormat,
+        .components = {VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY},
+        .subresourceRange = {
+            .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1
+        },
+    };
+    VK_CHECK(vkCreateImageView(device, &depthImageViewCreate, nullptr, &depthImageView));
+
+    VkAttachmentDescription attachments[2] = {
+        {
+            .flags = 0,
+            .format = chosenFormat,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        },
+        {
+            .flags = 0,
+            .format = depthFormat,
+            .samples = VK_SAMPLE_COUNT_1_BIT,
+            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+            .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+            .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        }
+    };
+    VkAttachmentReference colorReference = {
+        .attachment = 0,
+        .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    };
+    VkAttachmentReference depthReference = {
+        .attachment = 1,
+        .layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
+    };
+    VkSubpassDescription subpass = {
+        .flags = 0,
+        .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
+        .inputAttachmentCount = 0,
+        .pInputAttachments = nullptr,
+        .colorAttachmentCount = 1,
+        .pColorAttachments = &colorReference,
+        .pResolveAttachments = nullptr,
+        .pDepthStencilAttachment = &depthReference,
+        .preserveAttachmentCount = 0,
+        .pPreserveAttachments = nullptr,
+    };
+    VkSubpassDependency attachmentDependencies[2] = {
+        [0] = {
+            // Image Layout Transition
+            .srcSubpass = VK_SUBPASS_EXTERNAL,
+            .dstSubpass = 0,
+            .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+            .srcAccessMask = 0,
+            .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
+            .dependencyFlags = 0,
+        },
+        [1] = {
+            // Depth buffer is shared between swapchain images
+            .srcSubpass = VK_SUBPASS_EXTERNAL,
+            .dstSubpass = 0,
+            .srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+            .dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+            .srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+            .dependencyFlags = 0,
+        },
+    };
+    VkRenderPassCreateInfo renderPassCreate = {
+        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .attachmentCount = 2,
+        .pAttachments = attachments,
+        .subpassCount = 1,
+        .pSubpasses = &subpass,
+        .dependencyCount = 2,
+        .pDependencies = attachmentDependencies,
+    };
+    VkRenderPass renderPass;
+    VK_CHECK(vkCreateRenderPass(device, &renderPassCreate, nullptr, &renderPass));
+
+    std::vector<VkFramebuffer> framebuffers(swapchainImageCount);
+    for(int i = 0; i < swapchainImageCount; i++) {
+        VkImageView imageviews[2] = {colorImageViews[i], depthImageView};
+        VkFramebufferCreateInfo framebufferCreate = {
+            .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .renderPass = renderPass,
+            .attachmentCount = 2,
+            .pAttachments = imageviews,
+            .width = static_cast<uint32_t>(windowWidth),
+            .height = static_cast<uint32_t>(windowHeight),
+            .layers = 1,
+        };
+        VK_CHECK(vkCreateFramebuffer(device, &framebufferCreate, nullptr, &framebuffers[i]));
+    }
+
 #if 0
 9. Allocate memory for vertex and index buffers
 10. Create a VkBuffer for each of them
@@ -730,20 +901,185 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     create_vertex_buffers();
     printf("success creating buffers!\n");
 
-    uint32_t index = 0;
+    // Create a graphics pipeline
+
+    VkPipelineVertexInputStateCreateInfo vertex_input_state = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        .pNext = nullptr,
+    };
+
+    VkPipelineInputAssemblyStateCreateInfo input_assembly_state = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
+    };
+
+    VkPipelineRasterizationStateCreateInfo rasterization_state = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .polygonMode = VK_POLYGON_MODE_FILL,
+        .cullMode = VK_CULL_MODE_BACK_BIT,
+        .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
+        .depthClampEnable = VK_FALSE,
+        .rasterizerDiscardEnable = VK_FALSE,
+        .depthBiasEnable = VK_FALSE,
+        .lineWidth = 1.0f,
+    };
+
+    VkPipelineColorBlendAttachmentState att_state[1];
+    memset(att_state, 0, sizeof(att_state));
+    att_state[0].colorWriteMask = 0xf;
+    att_state[0].blendEnable = VK_FALSE;
+
+    VkPipelineColorBlendStateCreateInfo color_blend_state = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .attachmentCount = 1,
+        .pAttachments = att_state,
+    };
+
+    VkStencilOpState keep_always = { .failOp = VK_STENCIL_OP_KEEP, .passOp = VK_STENCIL_OP_KEEP, .compareOp = VK_COMPARE_OP_ALWAYS };
+    VkPipelineDepthStencilStateCreateInfo depth_stencil_state = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .depthTestEnable = VK_TRUE,
+        .depthWriteEnable = VK_TRUE,
+        .depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
+        .depthBoundsTestEnable = VK_FALSE,
+        .back = keep_always,
+        .front = keep_always,
+        .stencilTestEnable = VK_FALSE,
+    };
+
+    VkPipelineViewportStateCreateInfo viewport_state { 
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO,
+        .viewportCount = 1,
+        .scissorCount = 1,
+    };
+
+    VkPipelineMultisampleStateCreateInfo multisample_state = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .pSampleMask = NULL,
+        .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+    };
+
+    VkDynamicState dynamicStateEnables[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+
+    VkPipelineDynamicStateCreateInfo dynamicState = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
+        .pNext = nullptr,
+        .dynamicStateCount = std::size(dynamicStateEnables),
+        .pDynamicStates = dynamicStateEnables,
+    };
+
+    const char *vertex_shader_text = R"(
+#version 450
+
+layout (location = 0) in vec3 inPos;
+
+out gl_PerVertex
+{
+    vec4 gl_Position;
+};
+
+void main() 
+{
+   gl_Position = /* ubo.projectionMatrix * ubo.viewMatrix * ubo.modelMatrix * */ vec4(inPos.xyz, 1.0);
+}
+)";
+    std::vector<uint32_t> vertex_shader_code((strlen(vertex_shader_text) + 1 + sizeof(uint32_t) - 1) / sizeof(uint32_t) * sizeof(uint32_t));
+    memcpy(vertex_shader_code.data(), vertex_shader_text, strlen(vertex_shader_text) + 1);
+
+    VkShaderModule vertex_shader_module;
+    VkShaderModuleCreateInfo vertex_shader_create = {
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .codeSize = vertex_shader_code.size(),
+        .pCode = vertex_shader_code.data(),
+    };
+
+    VK_CHECK(vkCreateShaderModule(device, &vertex_shader_create, NULL, &vertex_shader_module));
+
+    const char* fragment_shader_text = R"(
+#version 450
+
+layout (location = 0) in vec3 inColor;
+
+layout (location = 0) out vec4 outFragColor;
+
+void main()
+{
+  outFragColor = vec4(inColor, 1.0);
+}
+)";
+    std::vector<uint32_t> fragment_shader_code((strlen(fragment_shader_text) + 1 + sizeof(uint32_t) - 1) / sizeof(uint32_t) * sizeof(uint32_t));
+    memcpy(fragment_shader_code.data(), fragment_shader_text, strlen(fragment_shader_text) + 1);
+
+    VkShaderModule fragment_shader_module;
+    VkShaderModuleCreateInfo fragment_shader_create = {
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .codeSize = fragment_shader_code.size(),
+        .pCode = fragment_shader_code.data(),
+    };
+
+    VK_CHECK(vkCreateShaderModule(device, &fragment_shader_create, NULL, &fragment_shader_module));
+
+    printf("vert module = %p\n", vertex_shader_module);
+    printf("frag module = %p\n", fragment_shader_module);
+
+    VkPipelineShaderStageCreateInfo vertexShaderCreate = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = VK_SHADER_STAGE_VERTEX_BIT,
+        .module = vertex_shader_module,
+        .pName = "main",
+    };
+    VkPipelineShaderStageCreateInfo fragmentShaderCreate = {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
+        .module = fragment_shader_module,
+        .pName = "main",
+    };
+
+    VkPipelineShaderStageCreateInfo shaderStages[] = {vertexShaderCreate, fragmentShaderCreate};
+
+    VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+
+    VkPipeline pipeline;
+    VkGraphicsPipelineCreateInfo create_pipeline = {
+        .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
+        .pNext = nullptr,
+        .layout = pipeline_layout,
+        .pVertexInputState = &vertex_input_state,
+        .pInputAssemblyState = &input_assembly_state,
+        .pRasterizationState = &rasterization_state,
+        .pColorBlendState = &color_blend_state,
+        .pMultisampleState = &multisample_state,
+        .pViewportState = &viewport_state,
+        .pDepthStencilState = &depth_stencil_state,
+        .stageCount = std::size(shaderStages),
+        .pStages = shaderStages,
+        .renderPass = renderPass,
+        .pDynamicState = &dynamicState,
+    };
+
+    VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &create_pipeline, nullptr, &pipeline));
+
+    uint32_t swapchainIndex = 0;
 
     // while(1)
     {
 
 #if 0
 5. ./ Begin a VkCommandBuffer
-6. Bind the graphics pipeline state
-7. Bind the vertex and index buffers
-8. Bind the texture resources
-9. Set viewport and scissor parameters
+./ begin a renderPass
 10. ./ Issue draw commands
+./ end renderPass
 11. ./ End the command buffer
-12. Submit the command buffer
+12. ./ Submit the command buffer
 #endif 
 
         VkCommandBufferBeginInfo begin = {
@@ -752,9 +1088,54 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
             .flags = 0, // VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
             .pInheritanceInfo = nullptr,
         };
-        VK_CHECK(vkBeginCommandBuffer(commandBuffers[index], &begin));
-        vkCmdDrawIndexed(commandBuffers[index], triangleCount * 3, 1, 0, 0, 0);
-        VK_CHECK(vkEndCommandBuffer(commandBuffers[index]));
+        VK_CHECK(vkBeginCommandBuffer(commandBuffers[swapchainIndex], &begin));
+        const VkClearValue clearValues [2] = {
+            [0] = {.color.float32 = {0.2f, 0.2f, 0.2f, 0.2f}},
+            [1] = {.depthStencil = {1.0f, 0}},
+        };
+        VkRenderPassBeginInfo beginRenderpass = {
+            .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+            .pNext = nullptr,
+            .renderPass = renderPass,
+            .framebuffer = framebuffers[swapchainIndex],
+            .renderArea = {{0, 0}, {static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight)}},
+            .clearValueCount = std::size(clearValues),
+            .pClearValues = clearValues,
+        };
+        vkCmdBeginRenderPass(commandBuffers[swapchainIndex], &beginRenderpass, VK_SUBPASS_CONTENTS_INLINE);
+
+        // 6. Bind the graphics pipeline state
+        vkCmdBindPipeline(commandBuffers[swapchainIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+        // vkCmdBindDescriptorSets(commandBuffers[swapchainIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1,
+            // descriptor_set[swapchainIndex], 0, NULL);
+
+        // 8. Bind the texture resources - NA
+
+        // 7. Bind the vertex and swapchainIndex buffers
+        VkDeviceSize offset = 0;
+        vkCmdBindVertexBuffers(commandBuffers[swapchainIndex], 0, 1, &vertex_buffer.buf, &offset);
+        vkCmdBindIndexBuffer(commandBuffers[swapchainIndex], index_buffer.buf, 0, VK_INDEX_TYPE_UINT32);
+
+        // 9. Set viewport and scissor parameters
+        VkViewport viewport{};
+        float viewport_dimension;
+        if (windowWidth < windowHeight) {
+            viewport_dimension = (float)windowWidth;
+            viewport.y = (windowHeight - windowWidth) / 2.0f;
+        } else {
+            viewport_dimension = (float)windowHeight;
+            viewport.x = (windowWidth - windowHeight) / 2.0f;
+        }
+        viewport.height = viewport_dimension;
+        viewport.width = viewport_dimension;
+        viewport.minDepth = (float)0.0f;
+        viewport.maxDepth = (float)1.0f;
+        vkCmdSetViewport(commandBuffers[swapchainIndex], 0, 1, &viewport);
+
+        vkCmdDrawIndexed(commandBuffers[swapchainIndex], triangleCount * 3, 1, 0, 0, 0);
+        vkCmdEndRenderPass(commandBuffers[swapchainIndex]);
+        VK_CHECK(vkEndCommandBuffer(commandBuffers[swapchainIndex]));
 
         VkSubmitInfo submit = {
             .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
@@ -763,15 +1144,15 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
             .pWaitSemaphores = nullptr,
             .pWaitDstStageMask = nullptr,
             .commandBufferCount = 1,
-            .pCommandBuffers = &commandBuffers[index],
+            .pCommandBuffers = &commandBuffers[swapchainIndex],
             .signalSemaphoreCount = 0,
             .pSignalSemaphores = nullptr,
         };
         VK_CHECK(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE));
 
 // 13. Present the rendered result
-        uint32_t indices[] = {index};
-        index = (index + 1) % swapchainImageCount;
+        uint32_t indices[] = {swapchainIndex};
+        swapchainIndex = (swapchainIndex + 1) % swapchainImageCount;
         VkPresentInfoKHR present {
             .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
             .pNext = nullptr,
