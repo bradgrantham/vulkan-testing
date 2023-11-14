@@ -9,6 +9,7 @@
 
 #include <cstring>
 #include <cassert>
+#include <unistd.h>
 
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
@@ -166,13 +167,13 @@ void create_instance(VkInstance* instance)
 	    layers.push_back(s.c_str());
         }
 
-	VkApplicationInfo app_info = {};
+	VkApplicationInfo app_info {};
 	app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
 	app_info.pApplicationName = "triangle";
 	app_info.pEngineName = "triangle";
 	app_info.apiVersion = VK_API_VERSION_1_2;
 
-	VkInstanceCreateInfo create = {};
+	VkInstanceCreateInfo create{};
 	create.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
 	create.pNext = nullptr;
 #if defined(PLATFORM_MACOS)
@@ -407,10 +408,10 @@ void create_vertex_buffers()
     void *mapped; // when mapped, this points to the buffer
 
     // Tells us how much memory and which memory types (by bit) can hold this memory
-    VkMemoryRequirements memory_req = {};
+    VkMemoryRequirements memory_req{};
 
     // Allocate memory
-    VkMemoryAllocateInfo memory_alloc = {};
+    VkMemoryAllocateInfo memory_alloc{};
     if(do_the_wrong_thing) {
         memory_alloc.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     } else {
@@ -421,7 +422,7 @@ void create_vertex_buffers()
     // Create a buffer - buffers are used for things like vertex data
     // This one will be used as the source of a transfer to a GPU-addressable
     // buffer
-    VkBufferCreateInfo create_staging_buffer = {};
+    VkBufferCreateInfo create_staging_buffer{};
     create_staging_buffer.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     create_staging_buffer.pNext = nullptr;
     create_staging_buffer.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
@@ -606,6 +607,43 @@ static VkSurfaceFormatKHR pick_surface_format(const VkSurfaceFormatKHR *surfaceF
     return surfaceFormats[0];
 }
 
+static std::vector<uint8_t> load_file(FILE *fp)
+{
+    long int start = ftell(fp);
+    fseek(fp, 0, SEEK_END);
+    long int end = ftell(fp);
+    fseek(fp, start, SEEK_SET);
+
+    std::vector<uint8_t> data(end - start);
+    size_t result = fread(data.data(), 1, end - start, fp);
+    assert(result == (end - start));
+
+    return data;
+}
+
+std::vector<uint32_t> load_code(const std::string& filename) 
+{
+    std::vector<uint8_t> text = load_file(fopen(filename.c_str(), "rb"));
+    std::vector<uint32_t> code((text.size() + sizeof(uint32_t) - 1) / sizeof(uint32_t));
+    memcpy(code.data(), text.data(), text.size());
+    return code;
+}
+
+VkShaderModule create_shader_module(const std::vector<uint32_t>& code)
+{
+    VkShaderModule module;
+    VkShaderModuleCreateInfo shader_create {
+        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .codeSize = code.size() * sizeof(code[0]),
+        .pCode = code.data(),
+    };
+
+    VK_CHECK(vkCreateShaderModule(device, &shader_create, NULL, &module));
+    return module;
+}
+
 int main(int argc, char **argv)
 {
     be_noisy = (getenv("BE_NOISY") != nullptr);
@@ -671,14 +709,14 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
 
 // 8. Create a VkSwapchain with desired parameters
     uint32_t swapchainImageCount = 3;
-    VkSwapchainCreateInfoKHR create = {
+    VkSwapchainCreateInfoKHR create {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .pNext = nullptr,
         .surface = surface,
         .minImageCount = swapchainImageCount,
         .imageFormat = chosenFormat,
         .imageColorSpace = chosenColorSpace,
-        .imageExtent = { static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight) },
+        .imageExtent { static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight) },
         .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
         .preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
         .compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
@@ -695,13 +733,15 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
 
     printf("success creating swapchain!\n");
 
-    VkCommandPoolCreateInfo create_command_pool = {};
-    create_command_pool.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
-    create_command_pool.flags = 0;
-    create_command_pool.queueFamilyIndex = preferred_queue_family;
+    VkCommandPoolCreateInfo create_command_pool{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .queueFamilyIndex = preferred_queue_family,
+    };
     VK_CHECK(vkCreateCommandPool(device, &create_command_pool, nullptr, &command_pool));
 
-    const VkCommandBufferAllocateInfo allocate = {
+    const VkCommandBufferAllocateInfo allocate{
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
         .pNext = nullptr,
         .commandPool = command_pool,
@@ -728,12 +768,12 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCount, swapchainImages.get()));
 
     VkFormat depthFormat = VK_FORMAT_D16_UNORM;
-    VkImageCreateInfo createDepthInfo = {
+    VkImageCreateInfo createDepthInfo{
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .pNext = NULL,
         .imageType = VK_IMAGE_TYPE_2D,
         .format = depthFormat,
-        .extent = {static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight), 1},
+        .extent{static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight), 1},
         .mipLevels = 1,
         .arrayLayers = 1,
         .samples = VK_SAMPLE_COUNT_1_BIT,
@@ -747,7 +787,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     vkGetImageMemoryRequirements(device, depthImage, &imageMemReqs);
     uint32_t memoryTypeIndex = getMemoryTypeIndex(imageMemReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     VkDeviceMemory depthImageMemory;
-    VkMemoryAllocateInfo depthAllocate = {
+    VkMemoryAllocateInfo depthAllocate{
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
         .pNext = nullptr,
         .allocationSize = imageMemReqs.size,
@@ -759,15 +799,15 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
 
     std::vector<VkImageView> colorImageViews(swapchainImageCount);
     for(int i = 0; i < swapchainImageCount; i++) {
-        VkImageViewCreateInfo colorImageViewCreate = {
+        VkImageViewCreateInfo colorImageViewCreate{
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
             .pNext = nullptr,
             .flags = 0,
             .image = swapchainImages[i],
             .viewType = VK_IMAGE_VIEW_TYPE_2D,
             .format = chosenFormat,
-            .components = {VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY},
-            .subresourceRange = {
+            .components{VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY},
+            .subresourceRange{
                 .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                 .baseMipLevel = 0,
                 .levelCount = 1,
@@ -778,15 +818,15 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         VK_CHECK(vkCreateImageView(device, &colorImageViewCreate, nullptr, &colorImageViews[i]));
     }
     VkImageView depthImageView;
-    VkImageViewCreateInfo depthImageViewCreate = {
+    VkImageViewCreateInfo depthImageViewCreate{
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
         .pNext = nullptr,
         .flags = 0,
         .image = depthImage,
         .viewType = VK_IMAGE_VIEW_TYPE_2D,
         .format = depthFormat,
-        .components = {VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY},
-        .subresourceRange = {
+        .components{VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY},
+        .subresourceRange{
             .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
             .baseMipLevel = 0,
             .levelCount = 1,
@@ -820,15 +860,15 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
             .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
         }
     };
-    VkAttachmentReference colorReference = {
+    VkAttachmentReference colorReference{
         .attachment = 0,
         .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
     };
-    VkAttachmentReference depthReference = {
+    VkAttachmentReference depthReference{
         .attachment = 1,
         .layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
     };
-    VkSubpassDescription subpass = {
+    VkSubpassDescription subpass{
         .flags = 0,
         .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
         .inputAttachmentCount = 0,
@@ -840,7 +880,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .preserveAttachmentCount = 0,
         .pPreserveAttachments = nullptr,
     };
-    VkSubpassDependency attachmentDependencies[2] = {
+    VkSubpassDependency attachmentDependencies[2]{
         [0] = {
             // Image Layout Transition
             .srcSubpass = VK_SUBPASS_EXTERNAL,
@@ -862,7 +902,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
             .dependencyFlags = 0,
         },
     };
-    VkRenderPassCreateInfo renderPassCreate = {
+    VkRenderPassCreateInfo renderPassCreate{
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
         .pNext = nullptr,
         .flags = 0,
@@ -879,7 +919,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     std::vector<VkFramebuffer> framebuffers(swapchainImageCount);
     for(int i = 0; i < swapchainImageCount; i++) {
         VkImageView imageviews[2] = {colorImageViews[i], depthImageView};
-        VkFramebufferCreateInfo framebufferCreate = {
+        VkFramebufferCreateInfo framebufferCreate{
             .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
             .pNext = nullptr,
             .flags = 0,
@@ -902,19 +942,41 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     printf("success creating buffers!\n");
 
     // Create a graphics pipeline
-
-    VkPipelineVertexInputStateCreateInfo vertex_input_state = {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
-        .pNext = nullptr,
+    VkVertexInputBindingDescription vertex_input_binding {
+        .binding = 0,
+        .stride = sizeof(vertex),
+        .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
     };
 
-    VkPipelineInputAssemblyStateCreateInfo input_assembly_state = {
+    VkVertexInputAttributeDescription vertex_position{
+        .binding = 0,
+        .location = 0,
+        .format = VK_FORMAT_R32G32B32_SFLOAT,
+        .offset = offsetof(vertex, v),
+    };
+    VkVertexInputAttributeDescription vertex_color{
+        .binding = 0,
+        .location = 1,
+        .format = VK_FORMAT_R32G32B32_SFLOAT,
+        .offset = offsetof(vertex, c),
+    };
+    std::vector<VkVertexInputAttributeDescription> vertex_input_attributes{vertex_position, vertex_color};
+
+    VkPipelineVertexInputStateCreateInfo vertex_input_state {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
+        .vertexBindingDescriptionCount = 1,
+        .pVertexBindingDescriptions = &vertex_input_binding,
+        .vertexAttributeDescriptionCount = static_cast<uint32_t>(vertex_input_attributes.size()),
+        .pVertexAttributeDescriptions = vertex_input_attributes.data(),
+    };
+
+    VkPipelineInputAssemblyStateCreateInfo input_assembly_state{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
         .pNext = nullptr,
         .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
     };
 
-    VkPipelineRasterizationStateCreateInfo rasterization_state = {
+    VkPipelineRasterizationStateCreateInfo rasterization_state{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
         .pNext = nullptr,
         .polygonMode = VK_POLYGON_MODE_FILL,
@@ -931,15 +993,15 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     att_state[0].colorWriteMask = 0xf;
     att_state[0].blendEnable = VK_FALSE;
 
-    VkPipelineColorBlendStateCreateInfo color_blend_state = {
+    VkPipelineColorBlendStateCreateInfo color_blend_state{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
         .pNext = nullptr,
         .attachmentCount = 1,
         .pAttachments = att_state,
     };
 
-    VkStencilOpState keep_always = { .failOp = VK_STENCIL_OP_KEEP, .passOp = VK_STENCIL_OP_KEEP, .compareOp = VK_COMPARE_OP_ALWAYS };
-    VkPipelineDepthStencilStateCreateInfo depth_stencil_state = {
+    VkStencilOpState keep_always{ .failOp = VK_STENCIL_OP_KEEP, .passOp = VK_STENCIL_OP_KEEP, .compareOp = VK_COMPARE_OP_ALWAYS };
+    VkPipelineDepthStencilStateCreateInfo depth_stencil_state{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
         .pNext = nullptr,
         .depthTestEnable = VK_TRUE,
@@ -957,99 +1019,58 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .scissorCount = 1,
     };
 
-    VkPipelineMultisampleStateCreateInfo multisample_state = {
+    VkPipelineMultisampleStateCreateInfo multisample_state{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
         .pNext = nullptr,
         .pSampleMask = NULL,
         .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
     };
 
-    VkDynamicState dynamicStateEnables[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkDynamicState dynamicStateEnables[]{ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 
-    VkPipelineDynamicStateCreateInfo dynamicState = {
+    VkPipelineDynamicStateCreateInfo dynamicState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
         .pNext = nullptr,
         .dynamicStateCount = std::size(dynamicStateEnables),
         .pDynamicStates = dynamicStateEnables,
     };
 
-    const char *vertex_shader_text = R"(
-#version 450
+    std::vector<uint32_t> vertex_shader_code = load_code("testing.vert");
+    printf("vert spir-v: %zd words (%x %x %x ... )\n", vertex_shader_code.size(), vertex_shader_code[0], vertex_shader_code[1], vertex_shader_code[2]);
+    VkShaderModule vertex_shader_module = create_shader_module(vertex_shader_code);
 
-layout (location = 0) in vec3 inPos;
-
-out gl_PerVertex
-{
-    vec4 gl_Position;
-};
-
-void main() 
-{
-   gl_Position = /* ubo.projectionMatrix * ubo.viewMatrix * ubo.modelMatrix * */ vec4(inPos.xyz, 1.0);
-}
-)";
-    std::vector<uint32_t> vertex_shader_code((strlen(vertex_shader_text) + 1 + sizeof(uint32_t) - 1) / sizeof(uint32_t) * sizeof(uint32_t));
-    memcpy(vertex_shader_code.data(), vertex_shader_text, strlen(vertex_shader_text) + 1);
-
-    VkShaderModule vertex_shader_module;
-    VkShaderModuleCreateInfo vertex_shader_create = {
-        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-        .pNext = nullptr,
-        .flags = 0,
-        .codeSize = vertex_shader_code.size(),
-        .pCode = vertex_shader_code.data(),
-    };
-
-    VK_CHECK(vkCreateShaderModule(device, &vertex_shader_create, NULL, &vertex_shader_module));
-
-    const char* fragment_shader_text = R"(
-#version 450
-
-layout (location = 0) in vec3 inColor;
-
-layout (location = 0) out vec4 outFragColor;
-
-void main()
-{
-  outFragColor = vec4(inColor, 1.0);
-}
-)";
-    std::vector<uint32_t> fragment_shader_code((strlen(fragment_shader_text) + 1 + sizeof(uint32_t) - 1) / sizeof(uint32_t) * sizeof(uint32_t));
-    memcpy(fragment_shader_code.data(), fragment_shader_text, strlen(fragment_shader_text) + 1);
-
-    VkShaderModule fragment_shader_module;
-    VkShaderModuleCreateInfo fragment_shader_create = {
-        .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-        .pNext = nullptr,
-        .flags = 0,
-        .codeSize = fragment_shader_code.size(),
-        .pCode = fragment_shader_code.data(),
-    };
-
-    VK_CHECK(vkCreateShaderModule(device, &fragment_shader_create, NULL, &fragment_shader_module));
+    std::vector<uint32_t> fragment_shader_code = load_code("testing.frag");
+    printf("frag spir-v: %zd words (%x %x %x ... )\n", fragment_shader_code.size(), fragment_shader_code[0], fragment_shader_code[1], fragment_shader_code[2]);
+    VkShaderModule fragment_shader_module = create_shader_module(fragment_shader_code);
 
     printf("vert module = %p\n", vertex_shader_module);
     printf("frag module = %p\n", fragment_shader_module);
 
-    VkPipelineShaderStageCreateInfo vertexShaderCreate = {
+    VkPipelineShaderStageCreateInfo vertexShaderCreate {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = nullptr,
         .stage = VK_SHADER_STAGE_VERTEX_BIT,
         .module = vertex_shader_module,
         .pName = "main",
     };
-    VkPipelineShaderStageCreateInfo fragmentShaderCreate = {
+    VkPipelineShaderStageCreateInfo fragmentShaderCreate {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+        .pNext = nullptr,
         .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
         .module = fragment_shader_module,
         .pName = "main",
     };
-
-    VkPipelineShaderStageCreateInfo shaderStages[] = {vertexShaderCreate, fragmentShaderCreate};
+    std::vector<VkPipelineShaderStageCreateInfo> shaderStages{vertexShaderCreate, fragmentShaderCreate};
 
     VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+    VkPipelineLayoutCreateInfo create_layout {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .pNext = nullptr,
+    };
+    VK_CHECK(vkCreatePipelineLayout(device, &create_layout, nullptr, &pipeline_layout));
 
     VkPipeline pipeline;
-    VkGraphicsPipelineCreateInfo create_pipeline = {
+    VkGraphicsPipelineCreateInfo create_pipeline {
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
         .pNext = nullptr,
         .layout = pipeline_layout,
@@ -1060,8 +1081,8 @@ void main()
         .pMultisampleState = &multisample_state,
         .pViewportState = &viewport_state,
         .pDepthStencilState = &depth_stencil_state,
-        .stageCount = std::size(shaderStages),
-        .pStages = shaderStages,
+        .stageCount = static_cast<uint32_t>(shaderStages.size()),
+        .pStages = shaderStages.data(),
         .renderPass = renderPass,
         .pDynamicState = &dynamicState,
     };
@@ -1069,6 +1090,14 @@ void main()
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &create_pipeline, nullptr, &pipeline));
 
     uint32_t swapchainIndex = 0;
+
+    VkSemaphoreCreateInfo sema_create = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0,
+    };
+    std::vector<VkSemaphore> image_acquired_semaphores(swapchainImageCount);
+    VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, image_acquired_semaphores.data()));
 
     // while(1)
     {
@@ -1082,18 +1111,22 @@ void main()
 12. ./ Submit the command buffer
 #endif 
 
-        VkCommandBufferBeginInfo begin = {
+        VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, image_acquired_semaphores[swapchainIndex], VK_NULL_HANDLE, &swapchainIndex));
+
+        auto cb = commandBuffers[swapchainIndex];
+
+        VkCommandBufferBeginInfo begin {
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
             .pNext = nullptr,
             .flags = 0, // VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
             .pInheritanceInfo = nullptr,
         };
-        VK_CHECK(vkBeginCommandBuffer(commandBuffers[swapchainIndex], &begin));
-        const VkClearValue clearValues [2] = {
+        VK_CHECK(vkBeginCommandBuffer(cb, &begin));
+        const VkClearValue clearValues [2] {
             [0] = {.color.float32 = {0.2f, 0.2f, 0.2f, 0.2f}},
             [1] = {.depthStencil = {1.0f, 0}},
         };
-        VkRenderPassBeginInfo beginRenderpass = {
+        VkRenderPassBeginInfo beginRenderpass {
             .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
             .pNext = nullptr,
             .renderPass = renderPass,
@@ -1102,20 +1135,20 @@ void main()
             .clearValueCount = std::size(clearValues),
             .pClearValues = clearValues,
         };
-        vkCmdBeginRenderPass(commandBuffers[swapchainIndex], &beginRenderpass, VK_SUBPASS_CONTENTS_INLINE);
+        vkCmdBeginRenderPass(cb, &beginRenderpass, VK_SUBPASS_CONTENTS_INLINE);
 
         // 6. Bind the graphics pipeline state
-        vkCmdBindPipeline(commandBuffers[swapchainIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
-        // vkCmdBindDescriptorSets(commandBuffers[swapchainIndex], VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1,
+        // vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1,
             // descriptor_set[swapchainIndex], 0, NULL);
 
         // 8. Bind the texture resources - NA
 
         // 7. Bind the vertex and swapchainIndex buffers
         VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(commandBuffers[swapchainIndex], 0, 1, &vertex_buffer.buf, &offset);
-        vkCmdBindIndexBuffer(commandBuffers[swapchainIndex], index_buffer.buf, 0, VK_INDEX_TYPE_UINT32);
+        vkCmdBindVertexBuffers(cb, 0, 1, &vertex_buffer.buf, &offset);
+        vkCmdBindIndexBuffer(cb, index_buffer.buf, 0, VK_INDEX_TYPE_UINT32);
 
         // 9. Set viewport and scissor parameters
         VkViewport viewport{};
@@ -1131,20 +1164,23 @@ void main()
         viewport.width = viewport_dimension;
         viewport.minDepth = (float)0.0f;
         viewport.maxDepth = (float)1.0f;
-        vkCmdSetViewport(commandBuffers[swapchainIndex], 0, 1, &viewport);
+        vkCmdSetViewport(cb, 0, 1, &viewport);
 
-        vkCmdDrawIndexed(commandBuffers[swapchainIndex], triangleCount * 3, 1, 0, 0, 0);
-        vkCmdEndRenderPass(commandBuffers[swapchainIndex]);
-        VK_CHECK(vkEndCommandBuffer(commandBuffers[swapchainIndex]));
+        VkRect2D scissor {.offset{0, 0,}, .extent{static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight)}};
+        vkCmdSetScissor(cb, 0, 1, &scissor);
 
-        VkSubmitInfo submit = {
+        vkCmdDrawIndexed(cb, triangleCount * 3, 1, 0, 0, 0);
+        vkCmdEndRenderPass(cb);
+        VK_CHECK(vkEndCommandBuffer(cb));
+
+        VkSubmitInfo submit {
             .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
             .pNext = nullptr,
             .waitSemaphoreCount = 0,
             .pWaitSemaphores = nullptr,
             .pWaitDstStageMask = nullptr,
             .commandBufferCount = 1,
-            .pCommandBuffers = &commandBuffers[swapchainIndex],
+            .pCommandBuffers = &cb,
             .signalSemaphoreCount = 0,
             .pSignalSemaphores = nullptr,
         };
@@ -1152,7 +1188,6 @@ void main()
 
 // 13. Present the rendered result
         uint32_t indices[] = {swapchainIndex};
-        swapchainIndex = (swapchainIndex + 1) % swapchainImageCount;
         VkPresentInfoKHR present {
             .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
             .pNext = nullptr,
@@ -1164,9 +1199,10 @@ void main()
             .pResults = nullptr,
         };
         VK_CHECK(vkQueuePresentKHR(queue, &present));
-
+        swapchainIndex = (swapchainIndex + 1) % swapchainImageCount;
     }
     printf("presented?!\n");
+    sleep(10);
 
     cleanup_vulkan();
 }
