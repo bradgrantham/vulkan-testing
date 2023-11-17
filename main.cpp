@@ -40,6 +40,19 @@ VkPhysicalDeviceMemoryProperties memory_properties;
 VkQueue queue;
 VkCommandPool command_pool;
 VkSurfaceKHR surface;
+VkSwapchainKHR swapchain;
+uint32_t swapchainIndex;
+std::vector<VkCommandBuffer> commandBuffers;
+uint32_t swapchainImageCount = 3;
+std::vector<VkImage> swapchainImages;
+std::vector<VkSemaphore> image_acquired_semaphores;
+std::vector<VkSemaphore> draw_completed_semaphores;
+std::vector<VkFence> draw_completed_fences;
+VkRenderPass renderPass;
+VkPipeline pipeline;
+std::vector<VkFramebuffer> framebuffers;
+
+int windowWidth, windowHeight;
 
 #ifdef PLATFORM_MACOS
 void *window;
@@ -644,6 +657,105 @@ VkShaderModule create_shader_module(const std::vector<uint32_t>& code)
     return module;
 }
 
+
+static void DrawFrame(GLFWwindow *window)
+{
+    VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, image_acquired_semaphores[swapchainIndex], VK_NULL_HANDLE, &swapchainIndex));
+
+    auto cb = commandBuffers[swapchainIndex];
+
+    VkCommandBufferBeginInfo begin {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .pNext = nullptr,
+        .flags = 0, // VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        .pInheritanceInfo = nullptr,
+    };
+    VK_CHECK(vkBeginCommandBuffer(cb, &begin));
+    const VkClearValue clearValues [2] {
+        [0] = {.color.float32 = {0.2f, 0.2f, 0.2f, 0.2f}},
+        [1] = {.depthStencil = {1.0f, 0}},
+    };
+    VkRenderPassBeginInfo beginRenderpass {
+        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+        .pNext = nullptr,
+        .renderPass = renderPass,
+        .framebuffer = framebuffers[swapchainIndex],
+        .renderArea = {{0, 0}, {static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight)}},
+        .clearValueCount = std::size(clearValues),
+        .pClearValues = clearValues,
+    };
+    vkCmdBeginRenderPass(cb, &beginRenderpass, VK_SUBPASS_CONTENTS_INLINE);
+
+    // 6. Bind the graphics pipeline state
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+    // vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1,
+    // descriptor_set[swapchainIndex], 0, NULL);
+
+    // 8. Bind the texture resources - NA
+
+    // 7. Bind the vertex and swapchainIndex buffers
+    VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(cb, 0, 1, &vertex_buffer.buf, &offset);
+    vkCmdBindIndexBuffer(cb, index_buffer.buf, 0, VK_INDEX_TYPE_UINT32);
+
+    // 9. Set viewport and scissor parameters
+    VkViewport viewport{};
+    float viewport_dimension;
+    if (windowWidth < windowHeight) {
+        viewport_dimension = (float)windowWidth;
+        viewport.y = (windowHeight - windowWidth) / 2.0f;
+    } else {
+        viewport_dimension = (float)windowHeight;
+        viewport.x = (windowWidth - windowHeight) / 2.0f;
+    }
+    viewport.height = viewport_dimension;
+    viewport.width = viewport_dimension;
+    viewport.minDepth = (float)0.0f;
+    viewport.maxDepth = (float)1.0f;
+    vkCmdSetViewport(cb, 0, 1, &viewport);
+
+    VkRect2D scissor {.offset{0, 0,}, .extent{static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight)}};
+    vkCmdSetScissor(cb, 0, 1, &scissor);
+
+    vkCmdDrawIndexed(cb, triangleCount * 3, 1, 0, 0, 0);
+    vkCmdEndRenderPass(cb);
+    VK_CHECK(vkEndCommandBuffer(cb));
+
+    VkSubmitInfo submit {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pNext = nullptr,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &image_acquired_semaphores[swapchainIndex],
+        .pWaitDstStageMask = nullptr,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &cb,
+        .signalSemaphoreCount = 0, // 1,
+        .pSignalSemaphores = nullptr, // &draw_completed_semaphores[swapchainIndex],
+    };
+    VK_CHECK(vkQueueSubmit(queue, 1, &submit, draw_completed_fences[swapchainIndex]));
+    VK_CHECK(vkWaitForFences(device, 1, &draw_completed_fences[swapchainIndex], VK_TRUE, DEFAULT_FENCE_TIMEOUT));
+    vkFreeCommandBuffers(device, command_pool, 1, cmd_bufs);
+    VK_CHECK(vkResetFences(device, 1, &draw_completed_fences[swapchainIndex]));
+
+    // 13. Present the rendered result
+    uint32_t indices[] = {swapchainIndex};
+    VkPresentInfoKHR present {
+        .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .pNext = nullptr,
+            .waitSemaphoreCount = 0, // 1,
+            .pWaitSemaphores = nullptr, // &draw_completed_semaphores[swapchainIndex],
+            .swapchainCount = 1,
+            .pSwapchains = &swapchain,
+            .pImageIndices = indices,
+            .pResults = nullptr,
+    };
+    VK_CHECK(vkQueuePresentKHR(queue, &present));
+    swapchainIndex = (swapchainIndex + 1) % swapchainImageCount;
+
+    printf("presented?!\n");
+}
+
 int main(int argc, char **argv)
 {
     be_noisy = (getenv("BE_NOISY") != nullptr);
@@ -693,7 +805,6 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
 
     printf("success creating device and window!\n");
 
-    int windowWidth, windowHeight;
     glfwGetWindowSize(window, &windowWidth, &windowHeight);
 
     uint32_t formatCount;
@@ -708,7 +819,6 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     // TODO verify present mode with vkGetPhysicalDeviceSurfacePresentModesKHR
 
 // 8. Create a VkSwapchain with desired parameters
-    uint32_t swapchainImageCount = 3;
     VkSwapchainCreateInfoKHR create {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .pNext = nullptr,
@@ -728,7 +838,6 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .oldSwapchain = VK_NULL_HANDLE, // oldSwapchain, // if we are recreating swapchain for when the window changes
         .clipped = true,
     };
-    VkSwapchainKHR swapchain;
     VK_CHECK(vkCreateSwapchainKHR(device, &create, nullptr, &swapchain));
 
     printf("success creating swapchain!\n");
@@ -736,7 +845,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     VkCommandPoolCreateInfo create_command_pool{
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .pNext = nullptr,
-        .flags = 0,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
         .queueFamilyIndex = preferred_queue_family,
     };
     VK_CHECK(vkCreateCommandPool(device, &create_command_pool, nullptr, &command_pool));
@@ -748,7 +857,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = 1,
     };
-    std::vector<VkCommandBuffer> commandBuffers(swapchainImageCount);
+    commandBuffers.resize(swapchainImageCount);
     for (int i = 0; i < swapchainImageCount; i++) {
         // Can't I just make commandBufferCount be swapchainImageCount here?
         VK_CHECK(vkAllocateCommandBuffers(device, &allocate, &commandBuffers[i]));
@@ -764,8 +873,8 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     uint32_t swapchainImageCountReturned;
     VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCountReturned, nullptr));
     assert(swapchainImageCountReturned == swapchainImageCount);
-    std::unique_ptr<VkImage[]> swapchainImages(new VkImage[swapchainImageCount]);
-    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCount, swapchainImages.get()));
+    swapchainImages.resize(swapchainImageCount);
+    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCount, swapchainImages.data()));
 
     VkFormat depthFormat = VK_FORMAT_D16_UNORM;
     VkImageCreateInfo createDepthInfo{
@@ -913,10 +1022,9 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .dependencyCount = 2,
         .pDependencies = attachmentDependencies,
     };
-    VkRenderPass renderPass;
     VK_CHECK(vkCreateRenderPass(device, &renderPassCreate, nullptr, &renderPass));
 
-    std::vector<VkFramebuffer> framebuffers(swapchainImageCount);
+    framebuffers.resize(swapchainImageCount);
     for(int i = 0; i < swapchainImageCount; i++) {
         VkImageView imageviews[2] = {colorImageViews[i], depthImageView};
         VkFramebufferCreateInfo framebufferCreate{
@@ -1069,7 +1177,6 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     };
     VK_CHECK(vkCreatePipelineLayout(device, &create_layout, nullptr, &pipeline_layout));
 
-    VkPipeline pipeline;
     VkGraphicsPipelineCreateInfo create_pipeline {
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
         .pNext = nullptr,
@@ -1089,122 +1196,52 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
 
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &create_pipeline, nullptr, &pipeline));
 
-    uint32_t swapchainIndex = 0;
-
+    // XXX create a timeline semaphore by chaining after a
+    // VkSemaphoreTypeCreateInfo with VkSemaphoreTypeCreateInfo =
+    // VK_SEMAPHORE_TYPE_TIMELINE
     VkSemaphoreCreateInfo sema_create = {
         .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
         .pNext = NULL,
         .flags = 0,
     };
-    std::vector<VkSemaphore> image_acquired_semaphores(swapchainImageCount);
-    VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, image_acquired_semaphores.data()));
-
-    // while(1)
-    {
-
-#if 0
-5. ./ Begin a VkCommandBuffer
-./ begin a renderPass
-10. ./ Issue draw commands
-./ end renderPass
-11. ./ End the command buffer
-12. ./ Submit the command buffer
-#endif 
-
-        VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, image_acquired_semaphores[swapchainIndex], VK_NULL_HANDLE, &swapchainIndex));
-
-        auto cb = commandBuffers[swapchainIndex];
-
-        VkCommandBufferBeginInfo begin {
-            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-            .pNext = nullptr,
-            .flags = 0, // VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-            .pInheritanceInfo = nullptr,
-        };
-        VK_CHECK(vkBeginCommandBuffer(cb, &begin));
-        const VkClearValue clearValues [2] {
-            [0] = {.color.float32 = {0.2f, 0.2f, 0.2f, 0.2f}},
-            [1] = {.depthStencil = {1.0f, 0}},
-        };
-        VkRenderPassBeginInfo beginRenderpass {
-            .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-            .pNext = nullptr,
-            .renderPass = renderPass,
-            .framebuffer = framebuffers[swapchainIndex],
-            .renderArea = {{0, 0}, {static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight)}},
-            .clearValueCount = std::size(clearValues),
-            .pClearValues = clearValues,
-        };
-        vkCmdBeginRenderPass(cb, &beginRenderpass, VK_SUBPASS_CONTENTS_INLINE);
-
-        // 6. Bind the graphics pipeline state
-        vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-
-        // vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1,
-            // descriptor_set[swapchainIndex], 0, NULL);
-
-        // 8. Bind the texture resources - NA
-
-        // 7. Bind the vertex and swapchainIndex buffers
-        VkDeviceSize offset = 0;
-        vkCmdBindVertexBuffers(cb, 0, 1, &vertex_buffer.buf, &offset);
-        vkCmdBindIndexBuffer(cb, index_buffer.buf, 0, VK_INDEX_TYPE_UINT32);
-
-        // 9. Set viewport and scissor parameters
-        VkViewport viewport{};
-        float viewport_dimension;
-        if (windowWidth < windowHeight) {
-            viewport_dimension = (float)windowWidth;
-            viewport.y = (windowHeight - windowWidth) / 2.0f;
-        } else {
-            viewport_dimension = (float)windowHeight;
-            viewport.x = (windowWidth - windowHeight) / 2.0f;
-        }
-        viewport.height = viewport_dimension;
-        viewport.width = viewport_dimension;
-        viewport.minDepth = (float)0.0f;
-        viewport.maxDepth = (float)1.0f;
-        vkCmdSetViewport(cb, 0, 1, &viewport);
-
-        VkRect2D scissor {.offset{0, 0,}, .extent{static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight)}};
-        vkCmdSetScissor(cb, 0, 1, &scissor);
-
-        vkCmdDrawIndexed(cb, triangleCount * 3, 1, 0, 0, 0);
-        vkCmdEndRenderPass(cb);
-        VK_CHECK(vkEndCommandBuffer(cb));
-
-        VkSubmitInfo submit {
-            .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-            .pNext = nullptr,
-            .waitSemaphoreCount = 0,
-            .pWaitSemaphores = nullptr,
-            .pWaitDstStageMask = nullptr,
-            .commandBufferCount = 1,
-            .pCommandBuffers = &cb,
-            .signalSemaphoreCount = 0,
-            .pSignalSemaphores = nullptr,
-        };
-        VK_CHECK(vkQueueSubmit(queue, 1, &submit, VK_NULL_HANDLE));
-
-// 13. Present the rendered result
-        uint32_t indices[] = {swapchainIndex};
-        VkPresentInfoKHR present {
-            .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-            .pNext = nullptr,
-            .waitSemaphoreCount = 0,
-            .pWaitSemaphores = nullptr,
-            .swapchainCount = 1,
-            .pSwapchains = &swapchain,
-            .pImageIndices = indices,
-            .pResults = nullptr,
-        };
-        VK_CHECK(vkQueuePresentKHR(queue, &present));
-        swapchainIndex = (swapchainIndex + 1) % swapchainImageCount;
+    image_acquired_semaphores.resize(swapchainImageCount);
+    for(int i = 0; i < swapchainImageCount; i++) {
+        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &image_acquired_semaphores[i]));
     }
-    printf("presented?!\n");
-    sleep(10);
+    draw_completed_semaphores.resize(swapchainImageCount);
+    for(int i = 0; i < swapchainImageCount; i++) {
+        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &draw_completed_semaphores[i]));
+    }
+    VkFenceCreateInfo fence_create = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0,
+    };
+    draw_completed_fences.resize(swapchainImageCount);
+    for(int i = 0; i < swapchainImageCount; i++) {
+        VK_CHECK(vkCreateFence(device, &fence_create, nullptr, &draw_completed_fences[i]));
+    }
+
+    // glfwSetKeyCallback(window, KeyCallback);
+    // glfwSetMouseButtonCallback(window, ButtonCallback);
+    // glfwSetCursorPosCallback(window, MotionCallback);
+    // glfwSetScrollCallback(window, ScrollCallback);
+    // glfwSetFramebufferSizeCallback(window, ResizeCallback);
+    glfwSetWindowRefreshCallback(window, DrawFrame);
+
+    while (!glfwWindowShouldClose(window)) {
+
+        DrawFrame(window);
+
+        // if(gStreamFrames)
+            glfwPollEvents();
+        // else
+        // glfwWaitEvents();
+    }
 
     cleanup_vulkan();
+
+    glfwTerminate();
 }
 
 #if 0
