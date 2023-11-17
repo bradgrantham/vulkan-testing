@@ -9,7 +9,6 @@
 
 #include <cstring>
 #include <cassert>
-#include <unistd.h>
 
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
@@ -300,7 +299,6 @@ void create_device(VkPhysicalDevice physical_device, VkDevice* device)
     std::vector<const char*> extensions;
 
     extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-    extensions.push_back("VK_NV_glsl_shader");
 #ifdef PLATFORM_MACOS
     extensions.push_back("VK_KHR_portability_subset" /* VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME */);
 #endif
@@ -311,7 +309,9 @@ void create_device(VkPhysicalDevice physical_device, VkDevice* device)
         VK_KHR_RAY_QUERY_EXTENSION_NAME
     });
 #endif
-
+    for(const auto &e: extensions) {
+        printf("asked for %s\n", e);
+    }
 
     VkDeviceQueueCreateInfo create_queues[1] = {};
     float queue_priorities[1] = {1.0f};
@@ -672,8 +672,8 @@ static void DrawFrame(GLFWwindow *window)
     };
     VK_CHECK(vkBeginCommandBuffer(cb, &begin));
     const VkClearValue clearValues [2] {
-        [0] = {.color.float32 = {0.2f, 0.2f, 0.2f, 0.2f}},
-        [1] = {.depthStencil = {1.0f, 0}},
+        {.color {.float32 {0.2f, 0.2f, 0.2f, 0.2f}}},
+        {.depthStencil = {1.0f, 0}},
     };
     VkRenderPassBeginInfo beginRenderpass {
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
@@ -681,7 +681,7 @@ static void DrawFrame(GLFWwindow *window)
         .renderPass = renderPass,
         .framebuffer = framebuffers[swapchainIndex],
         .renderArea = {{0, 0}, {static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight)}},
-        .clearValueCount = std::size(clearValues),
+        .clearValueCount = static_cast<uint32_t>(std::size(clearValues)),
         .pClearValues = clearValues,
     };
     vkCmdBeginRenderPass(cb, &beginRenderpass, VK_SUBPASS_CONTENTS_INLINE);
@@ -735,7 +735,6 @@ static void DrawFrame(GLFWwindow *window)
     };
     VK_CHECK(vkQueueSubmit(queue, 1, &submit, draw_completed_fences[swapchainIndex]));
     VK_CHECK(vkWaitForFences(device, 1, &draw_completed_fences[swapchainIndex], VK_TRUE, DEFAULT_FENCE_TIMEOUT));
-    vkFreeCommandBuffers(device, command_pool, 1, cmd_bufs);
     VK_CHECK(vkResetFences(device, 1, &draw_completed_fences[swapchainIndex]));
 
     // 13. Present the rendered result
@@ -827,16 +826,16 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .imageFormat = chosenFormat,
         .imageColorSpace = chosenColorSpace,
         .imageExtent { static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight) },
-        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
-        .preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
-        .compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
         .imageArrayLayers = 1,
+        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = 0,
         .pQueueFamilyIndices = nullptr,
+        .preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
+        .compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
         .presentMode = swapchainPresentMode,
-        .oldSwapchain = VK_NULL_HANDLE, // oldSwapchain, // if we are recreating swapchain for when the window changes
         .clipped = true,
+        .oldSwapchain = VK_NULL_HANDLE, // oldSwapchain, // if we are recreating swapchain for when the window changes
     };
     VK_CHECK(vkCreateSwapchainKHR(device, &create, nullptr, &swapchain));
 
@@ -858,7 +857,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .commandBufferCount = 1,
     };
     commandBuffers.resize(swapchainImageCount);
-    for (int i = 0; i < swapchainImageCount; i++) {
+    for (uint32_t i = 0; i < swapchainImageCount; i++) {
         // Can't I just make commandBufferCount be swapchainImageCount here?
         VK_CHECK(vkAllocateCommandBuffers(device, &allocate, &commandBuffers[i]));
     }
@@ -880,6 +879,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     VkImageCreateInfo createDepthInfo{
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .pNext = NULL,
+        .flags = 0,
         .imageType = VK_IMAGE_TYPE_2D,
         .format = depthFormat,
         .extent{static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight), 1},
@@ -888,7 +888,6 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .samples = VK_SAMPLE_COUNT_1_BIT,
         .tiling = VK_IMAGE_TILING_OPTIMAL,
         .usage = VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
-        .flags = 0,
     };
     VkImage depthImage;
     VK_CHECK(vkCreateImage(device, &createDepthInfo, nullptr, &depthImage));
@@ -907,7 +906,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     // bind image to memory
 
     std::vector<VkImageView> colorImageViews(swapchainImageCount);
-    for(int i = 0; i < swapchainImageCount; i++) {
+    for(uint32_t i = 0; i < swapchainImageCount; i++) {
         VkImageViewCreateInfo colorImageViewCreate{
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
             .pNext = nullptr,
@@ -990,7 +989,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .pPreserveAttachments = nullptr,
     };
     VkSubpassDependency attachmentDependencies[2]{
-        [0] = {
+        {
             // Image Layout Transition
             .srcSubpass = VK_SUBPASS_EXTERNAL,
             .dstSubpass = 0,
@@ -1000,7 +999,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
             .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
             .dependencyFlags = 0,
         },
-        [1] = {
+        {
             // Depth buffer is shared between swapchain images
             .srcSubpass = VK_SUBPASS_EXTERNAL,
             .dstSubpass = 0,
@@ -1025,7 +1024,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     VK_CHECK(vkCreateRenderPass(device, &renderPassCreate, nullptr, &renderPass));
 
     framebuffers.resize(swapchainImageCount);
-    for(int i = 0; i < swapchainImageCount; i++) {
+    for(uint32_t i = 0; i < swapchainImageCount; i++) {
         VkImageView imageviews[2] = {colorImageViews[i], depthImageView};
         VkFramebufferCreateInfo framebufferCreate{
             .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
@@ -1057,14 +1056,14 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     };
 
     VkVertexInputAttributeDescription vertex_position{
-        .binding = 0,
         .location = 0,
+        .binding = 0,
         .format = VK_FORMAT_R32G32B32_SFLOAT,
         .offset = offsetof(vertex, v),
     };
     VkVertexInputAttributeDescription vertex_color{
-        .binding = 0,
         .location = 1,
+        .binding = 0,
         .format = VK_FORMAT_R32G32B32_SFLOAT,
         .offset = offsetof(vertex, c),
     };
@@ -1087,11 +1086,11 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     VkPipelineRasterizationStateCreateInfo rasterization_state{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
         .pNext = nullptr,
+        .depthClampEnable = VK_FALSE,
+        .rasterizerDiscardEnable = VK_FALSE,
         .polygonMode = VK_POLYGON_MODE_FILL,
         .cullMode = VK_CULL_MODE_BACK_BIT,
         .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
-        .depthClampEnable = VK_FALSE,
-        .rasterizerDiscardEnable = VK_FALSE,
         .depthBiasEnable = VK_FALSE,
         .lineWidth = 1.0f,
     };
@@ -1116,9 +1115,9 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .depthWriteEnable = VK_TRUE,
         .depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
         .depthBoundsTestEnable = VK_FALSE,
-        .back = keep_always,
-        .front = keep_always,
         .stencilTestEnable = VK_FALSE,
+        .front = keep_always,
+        .back = keep_always,
     };
 
     VkPipelineViewportStateCreateInfo viewport_state { 
@@ -1130,8 +1129,8 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     VkPipelineMultisampleStateCreateInfo multisample_state{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
         .pNext = nullptr,
-        .pSampleMask = NULL,
         .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
+        .pSampleMask = NULL,
     };
 
     VkDynamicState dynamicStateEnables[]{ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
@@ -1139,7 +1138,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     VkPipelineDynamicStateCreateInfo dynamicState{
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
         .pNext = nullptr,
-        .dynamicStateCount = std::size(dynamicStateEnables),
+        .dynamicStateCount = static_cast<uint32_t>(std::size(dynamicStateEnables)),
         .pDynamicStates = dynamicStateEnables,
     };
 
@@ -1180,18 +1179,18 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     VkGraphicsPipelineCreateInfo create_pipeline {
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
         .pNext = nullptr,
-        .layout = pipeline_layout,
-        .pVertexInputState = &vertex_input_state,
-        .pInputAssemblyState = &input_assembly_state,
-        .pRasterizationState = &rasterization_state,
-        .pColorBlendState = &color_blend_state,
-        .pMultisampleState = &multisample_state,
-        .pViewportState = &viewport_state,
-        .pDepthStencilState = &depth_stencil_state,
         .stageCount = static_cast<uint32_t>(shaderStages.size()),
         .pStages = shaderStages.data(),
-        .renderPass = renderPass,
+        .pVertexInputState = &vertex_input_state,
+        .pInputAssemblyState = &input_assembly_state,
+        .pViewportState = &viewport_state,
+        .pRasterizationState = &rasterization_state,
+        .pMultisampleState = &multisample_state,
+        .pDepthStencilState = &depth_stencil_state,
+        .pColorBlendState = &color_blend_state,
         .pDynamicState = &dynamicState,
+        .layout = pipeline_layout,
+        .renderPass = renderPass,
     };
 
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &create_pipeline, nullptr, &pipeline));
@@ -1205,11 +1204,11 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .flags = 0,
     };
     image_acquired_semaphores.resize(swapchainImageCount);
-    for(int i = 0; i < swapchainImageCount; i++) {
+    for(uint32_t i = 0; i < swapchainImageCount; i++) {
         VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &image_acquired_semaphores[i]));
     }
     draw_completed_semaphores.resize(swapchainImageCount);
-    for(int i = 0; i < swapchainImageCount; i++) {
+    for(uint32_t i = 0; i < swapchainImageCount; i++) {
         VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &draw_completed_semaphores[i]));
     }
     VkFenceCreateInfo fence_create = {
@@ -1218,7 +1217,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .flags = 0,
     };
     draw_completed_fences.resize(swapchainImageCount);
-    for(int i = 0; i < swapchainImageCount; i++) {
+    for(uint32_t i = 0; i < swapchainImageCount; i++) {
         VK_CHECK(vkCreateFence(device, &fence_create, nullptr, &draw_completed_fences[i]));
     }
 
