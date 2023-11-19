@@ -1,3 +1,5 @@
+#define _CRT_SECURE_NO_WARNINGS
+
 #include <iostream>
 #include <algorithm>
 #include <memory>
@@ -30,6 +32,7 @@
 
 // Styled somewhat after Sascha Willem's triangle
 
+#pragma warning( disable : 4459 ) // Fix this by making container for these globals, pull methods into it, call methods from main
 VkInstance instance;
 VkPhysicalDevice physical_device;
 const uint32_t NO_QUEUE_FAMILY = 0xffffffff;
@@ -689,8 +692,8 @@ VkViewport calculate_viewport(uint32_t windowWidth, uint32_t windowHeight)
     VkViewport viewport {
         .x = viewport_x,
         .y = viewport_y,
-        .height = viewport_dimension,
         .width = viewport_dimension,
+        .height = viewport_dimension,
         .minDepth = 0.0f,
         .maxDepth = 1.0f,
     };
@@ -712,6 +715,7 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
         .flags = 0, // VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
         .pInheritanceInfo = nullptr,
     };
+    VK_CHECK(vkResetCommandBuffer(cb, 0));
     VK_CHECK(vkBeginCommandBuffer(cb, &begin));
     const VkClearValue clearValues [2] {
         {.color {.float32 {0.1f, 0.1f, 0.2f, 1.0f}}},
@@ -754,12 +758,14 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
     vkCmdEndRenderPass(cb);
     VK_CHECK(vkEndCommandBuffer(cb));
 
+    // VUID-VkSubmitInfo-pWaitDstStageMask-parameter(ERROR / SPEC): msgNum: 1664434982 - Validation Error: [ VUID-VkSubmitInfo-pWaitDstStageMask-parameter ] | MessageID = 0x63354326 | VkSubmitInfo: required parameter pSubmits[0].pWaitDstStageMask specified as NULL. The Vulkan spec states: If waitSemaphoreCount is not 0, pWaitDstStageMask must be a valid pointer to an array of waitSemaphoreCount valid combinations of VkPipelineStageFlagBits values (https://vulkan.lunarg.com/doc/view/1.3.261.1/windows/1.3-extensions/vkspec.html#VUID-VkSubmitInfo-pWaitDstStageMask-parameter)
+    VkPipelineStageFlags waitdststagemask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     VkSubmitInfo submit {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .pNext = nullptr,
         .waitSemaphoreCount = 1,
         .pWaitSemaphores = &image_acquired_semaphores[swapchainIndex],
-        .pWaitDstStageMask = nullptr,
+        .pWaitDstStageMask = &waitdststagemask,
         .commandBufferCount = 1,
         .pCommandBuffers = &cb,
         .signalSemaphoreCount = 1,
@@ -856,17 +862,44 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .imageColorSpace = chosenColorSpace,
         .imageExtent { static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight) },
         .imageArrayLayers = 1,
-        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT,
+        .imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT,
         .imageSharingMode = VK_SHARING_MODE_EXCLUSIVE,
         .queueFamilyIndexCount = 0,
         .pQueueFamilyIndices = nullptr,
         .preTransform = VK_SURFACE_TRANSFORM_IDENTITY_BIT_KHR,
-        .compositeAlpha = VK_COMPOSITE_ALPHA_INHERIT_BIT_KHR,
+        .compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR,
         .presentMode = swapchainPresentMode,
         .clipped = true,
         .oldSwapchain = VK_NULL_HANDLE, // oldSwapchain, // if we are recreating swapchain for when the window changes
     };
     VK_CHECK(vkCreateSwapchainKHR(device, &create, nullptr, &swapchain));
+
+    uint32_t swapchainImageCountReturned;
+    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCountReturned, nullptr));
+    assert(swapchainImageCountReturned == swapchainImageCount);
+    swapchainImages.resize(swapchainImageCount);
+    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCount, swapchainImages.data()));
+
+    std::vector<VkImageView> colorImageViews(swapchainImageCount);
+    for(uint32_t i = 0; i < swapchainImageCount; i++) {
+        VkImageViewCreateInfo colorImageViewCreate{
+            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+            .pNext = nullptr,
+            .flags = 0,
+            .image = swapchainImages[i],
+            .viewType = VK_IMAGE_VIEW_TYPE_2D,
+            .format = chosenFormat,
+            .components{VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY},
+            .subresourceRange{
+                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                .baseMipLevel = 0,
+                .levelCount = 1,
+                .baseArrayLayer = 0,
+                .layerCount = 1
+            },
+        };
+        VK_CHECK(vkCreateImageView(device, &colorImageViewCreate, nullptr, &colorImageViews[i]));
+    }
 
     printf("success creating swapchain!\n");
 
@@ -883,28 +916,12 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .pNext = nullptr,
         .commandPool = command_pool,
         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = 1,
+        .commandBufferCount = swapchainImageCount,
     };
     commandBuffers.resize(swapchainImageCount);
-    for (uint32_t i = 0; i < swapchainImageCount; i++) {
-        // Can't I just make commandBufferCount be swapchainImageCount here?
-        VK_CHECK(vkAllocateCommandBuffers(device, &allocate, &commandBuffers[i]));
-    }
+    VK_CHECK(vkAllocateCommandBuffers(device, &allocate, commandBuffers.data()));
 
-#if 0
-1. Create a VkRenderPass
-2. Create a VkFramebuffer with the swapchain images
-3. Create a VkPipelineLayout
-4. Create a VkGraphicsPipeline
-#endif
-
-    uint32_t swapchainImageCountReturned;
-    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCountReturned, nullptr));
-    assert(swapchainImageCountReturned == swapchainImageCount);
-    swapchainImages.resize(swapchainImageCount);
-    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCount, swapchainImages.data()));
-
-    VkFormat depthFormat = VK_FORMAT_D16_UNORM;
+    VkFormat depthFormat = VK_FORMAT_D32_SFLOAT_S8_UINT;
     VkImageCreateInfo createDepthInfo {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .pNext = NULL,
@@ -934,26 +951,6 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     VK_CHECK(vkBindImageMemory(device, depthImage, depthImageMemory, 0));
     // bind image to memory
 
-    std::vector<VkImageView> colorImageViews(swapchainImageCount);
-    for(uint32_t i = 0; i < swapchainImageCount; i++) {
-        VkImageViewCreateInfo colorImageViewCreate{
-            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .pNext = nullptr,
-            .flags = 0,
-            .image = swapchainImages[i],
-            .viewType = VK_IMAGE_VIEW_TYPE_2D,
-            .format = chosenFormat,
-            .components{VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY},
-            .subresourceRange{
-                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                .baseMipLevel = 0,
-                .levelCount = 1,
-                .baseArrayLayer = 0,
-                .layerCount = 1
-            },
-        };
-        VK_CHECK(vkCreateImageView(device, &colorImageViewCreate, nullptr, &colorImageViews[i]));
-    }
     VkImageView depthImageView;
     VkImageViewCreateInfo depthImageViewCreate{
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -964,7 +961,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .format = depthFormat,
         .components{VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY},
         .subresourceRange{
-            .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT,
+            .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT,
             .baseMipLevel = 0,
             .levelCount = 1,
             .baseArrayLayer = 0,
@@ -994,7 +991,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
             .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
             .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
             .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-            .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+            .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
         }
     };
     VkAttachmentReference colorReference{
@@ -1017,27 +1014,29 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .preserveAttachmentCount = 0,
         .pPreserveAttachments = nullptr,
     };
-    VkSubpassDependency attachmentDependencies[2]{
-        {
-            // Image Layout Transition
-            .srcSubpass = VK_SUBPASS_EXTERNAL,
-            .dstSubpass = 0,
-            .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-            .srcAccessMask = 0,
-            .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
-            .dependencyFlags = 0,
-        },
-        {
-            // Depth buffer is shared between swapchain images
-            .srcSubpass = VK_SUBPASS_EXTERNAL,
-            .dstSubpass = 0,
-            .srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-            .dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
-            .srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            .dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
-            .dependencyFlags = 0,
-        },
+    VkSubpassDependency colorAttachmentDependency {
+        // Image Layout Transition
+        .srcSubpass = VK_SUBPASS_EXTERNAL,
+        .dstSubpass = 0,
+        .srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+        .srcAccessMask = 0,
+        .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
+        .dependencyFlags = 0,
+    };
+    VkSubpassDependency depthAttachmentDependency {
+        // Depth buffer is shared between swapchain images
+        .srcSubpass = VK_SUBPASS_EXTERNAL,
+        .dstSubpass = 0,
+        .srcStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        .dstStageMask = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT | VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+        .srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
+        .dependencyFlags = 0,
+    };
+    VkSubpassDependency attachmentDependencies[2] {
+        depthAttachmentDependency,
+        colorAttachmentDependency,
     };
     VkRenderPassCreateInfo renderPassCreate{
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
@@ -1118,7 +1117,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .depthClampEnable = VK_FALSE,
         .rasterizerDiscardEnable = VK_FALSE,
         .polygonMode = VK_POLYGON_MODE_FILL,
-        .cullMode = VK_CULL_MODE_BACK_BIT,
+        .cullMode = VK_CULL_MODE_NONE, // VK_CULL_MODE_BACK_BIT,
         .frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE,
         .depthBiasEnable = VK_FALSE,
         .lineWidth = 1.0f,
@@ -1126,8 +1125,8 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
 
     VkPipelineColorBlendAttachmentState att_state[1] = {
         {
-            .colorWriteMask = 0xf,
             .blendEnable = VK_FALSE,
+            .colorWriteMask = 0xf,
         },
     };
 
@@ -1142,7 +1141,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     VkPipelineDepthStencilStateCreateInfo depth_stencil_state {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
         .pNext = nullptr,
-        .depthTestEnable = VK_FALSE, // VK_TRUE,
+        .depthTestEnable = VK_TRUE,
         .depthWriteEnable = VK_TRUE,
         .depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
         .depthBoundsTestEnable = VK_FALSE,
