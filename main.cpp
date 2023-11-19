@@ -415,9 +415,9 @@ void flushCommandBuffer(VkCommandBuffer commandBuffer)
 
 // geometry data
 static vertex vertices[3] = {
-    {{-.5, .5, -.5}, {1, 0, 0}},
-    {{.5, -.5, .5}, {0, 1, 0}},
-    {{-.5, .5, .5}, {0, 0, 1}},
+    {{-.5, .5, .5}, {1, 0, 0}},
+    {{-.5, -.5, .5}, {0, 1, 0}},
+    {{.5, -.5,  .5}, {0, 0, 1}},
 };
 static uint32_t indices[3] = {0, 1, 2}; 
 int triangleCount = 1;
