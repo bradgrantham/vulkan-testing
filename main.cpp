@@ -47,9 +47,11 @@ std::vector<VkImage> swapchainImages;
 std::vector<VkSemaphore> image_acquired_semaphores;
 std::vector<VkSemaphore> draw_completed_semaphores;
 std::vector<VkFence> draw_completed_fences;
+int draw_submission_index = 0;
 VkRenderPass renderPass;
 VkPipeline pipeline;
 std::vector<VkFramebuffer> framebuffers;
+static constexpr int MAX_IN_FLIGHT = 2;
 
 int windowWidth, windowHeight;
 
@@ -309,8 +311,10 @@ void create_device(VkPhysicalDevice physical_device, VkDevice* device)
         VK_KHR_RAY_QUERY_EXTENSION_NAME
     });
 #endif
-    for(const auto &e: extensions) {
-        printf("asked for %s\n", e);
+    if(be_noisy) {
+        for(const auto &e: extensions) {
+            printf("asked for %s\n", e);
+        }
     }
 
     VkDeviceQueueCreateInfo create_queues[1] = {};
@@ -389,9 +393,11 @@ void flushCommandBuffer(VkCommandBuffer commandBuffer)
     submitInfo.pCommandBuffers = &commandBuffer;
 
     // Create fence to ensure that the command buffer has finished executing
-    VkFenceCreateInfo fenceCreateInfo = {};
-    fenceCreateInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
-    fenceCreateInfo.flags = 0;
+    VkFenceCreateInfo fenceCreateInfo = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+    };
     VkFence fence;
     VK_CHECK(vkCreateFence(device, &fenceCreateInfo, nullptr, &fence));
 
@@ -406,9 +412,9 @@ void flushCommandBuffer(VkCommandBuffer commandBuffer)
 
 // geometry data
 static vertex vertices[3] = {
-    {{0, 0, 0}, {1, 0, 0}},
-    {{1, 0, 0}, {0, 1, 0}},
-    {{0, 1, 0}, {0, 0, 1}},
+    {{-.5, .5, -.5}, {1, 0, 0}},
+    {{.5, -.5, .5}, {0, 1, 0}},
+    {{-.5, .5, .5}, {0, 0, 1}},
 };
 static uint32_t indices[3] = {0, 1, 2}; 
 int triangleCount = 1;
@@ -596,7 +602,7 @@ void cleanup_vulkan()
 #endif
 }
 
-static void error_callback(int error, const char* description)
+static void error_callback([[maybe_unused]] int error, const char* description)
 {
     fprintf(stderr, "GLFW: %s\n", description);
 }
@@ -629,7 +635,7 @@ static std::vector<uint8_t> load_file(FILE *fp)
 
     std::vector<uint8_t> data(end - start);
     size_t result = fread(data.data(), 1, end - start, fp);
-    assert(result == (end - start));
+    assert(result == static_cast<size_t>(end - start));
 
     return data;
 }
@@ -657,9 +663,45 @@ VkShaderModule create_shader_module(const std::vector<uint32_t>& code)
     return module;
 }
 
-
-static void DrawFrame(GLFWwindow *window)
+static void KeyCallback(GLFWwindow *window, int key, [[maybe_unused]] int scancode, int action, [[maybe_unused]] int mods)
 {
+    if(action == GLFW_PRESS) {
+        switch(key) {
+            case 'Q': case GLFW_KEY_ESCAPE: case '\033':
+                glfwSetWindowShouldClose(window, GL_TRUE);
+                break;
+        }
+    }
+}
+
+VkViewport calculate_viewport(uint32_t windowWidth, uint32_t windowHeight) 
+{
+    float viewport_dimension;
+    float viewport_x = 0.0f;
+    float viewport_y = 0.0f;
+    if (windowWidth < windowHeight) {
+        viewport_dimension = static_cast<float>(windowWidth);
+        viewport_y = (windowHeight - windowWidth) / 2.0f;
+    } else {
+        viewport_dimension = static_cast<float>(windowHeight);
+        viewport_x = (windowWidth - windowHeight) / 2.0f;
+    }
+    VkViewport viewport {
+        .x = viewport_x,
+        .y = viewport_y,
+        .height = viewport_dimension,
+        .width = viewport_dimension,
+        .minDepth = 0.0f,
+        .maxDepth = 1.0f,
+    };
+    return viewport;
+}
+
+static void DrawFrame([[maybe_unused]] GLFWwindow *window)
+{
+    VK_CHECK(vkWaitForFences(device, 1, &draw_completed_fences[draw_submission_index], VK_TRUE, DEFAULT_FENCE_TIMEOUT));
+    VK_CHECK(vkResetFences(device, 1, &draw_completed_fences[draw_submission_index]));
+
     VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, image_acquired_semaphores[swapchainIndex], VK_NULL_HANDLE, &swapchainIndex));
 
     auto cb = commandBuffers[swapchainIndex];
@@ -672,7 +714,7 @@ static void DrawFrame(GLFWwindow *window)
     };
     VK_CHECK(vkBeginCommandBuffer(cb, &begin));
     const VkClearValue clearValues [2] {
-        {.color {.float32 {0.2f, 0.2f, 0.2f, 0.2f}}},
+        {.color {.float32 {0.1f, 0.1f, 0.2f, 1.0f}}},
         {.depthStencil = {1.0f, 0}},
     };
     VkRenderPassBeginInfo beginRenderpass {
@@ -700,22 +742,12 @@ static void DrawFrame(GLFWwindow *window)
     vkCmdBindIndexBuffer(cb, index_buffer.buf, 0, VK_INDEX_TYPE_UINT32);
 
     // 9. Set viewport and scissor parameters
-    VkViewport viewport{};
-    float viewport_dimension;
-    if (windowWidth < windowHeight) {
-        viewport_dimension = (float)windowWidth;
-        viewport.y = (windowHeight - windowWidth) / 2.0f;
-    } else {
-        viewport_dimension = (float)windowHeight;
-        viewport.x = (windowWidth - windowHeight) / 2.0f;
-    }
-    viewport.height = viewport_dimension;
-    viewport.width = viewport_dimension;
-    viewport.minDepth = (float)0.0f;
-    viewport.maxDepth = (float)1.0f;
+    VkViewport viewport = calculate_viewport(static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowWidth));
     vkCmdSetViewport(cb, 0, 1, &viewport);
 
-    VkRect2D scissor {.offset{0, 0,}, .extent{static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight)}};
+    VkRect2D scissor {
+        .offset{0, 0},
+        .extent{static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight)}};
     vkCmdSetScissor(cb, 0, 1, &scissor);
 
     vkCmdDrawIndexed(cb, triangleCount * 3, 1, 0, 0, 0);
@@ -730,20 +762,19 @@ static void DrawFrame(GLFWwindow *window)
         .pWaitDstStageMask = nullptr,
         .commandBufferCount = 1,
         .pCommandBuffers = &cb,
-        .signalSemaphoreCount = 0, // 1,
-        .pSignalSemaphores = nullptr, // &draw_completed_semaphores[swapchainIndex],
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores = &draw_completed_semaphores[swapchainIndex],
     };
-    VK_CHECK(vkQueueSubmit(queue, 1, &submit, draw_completed_fences[swapchainIndex]));
-    VK_CHECK(vkWaitForFences(device, 1, &draw_completed_fences[swapchainIndex], VK_TRUE, DEFAULT_FENCE_TIMEOUT));
-    VK_CHECK(vkResetFences(device, 1, &draw_completed_fences[swapchainIndex]));
+    VK_CHECK(vkQueueSubmit(queue, 1, &submit, draw_completed_fences[draw_submission_index]));
+    draw_submission_index = (draw_submission_index + 1) % MAX_IN_FLIGHT;
 
     // 13. Present the rendered result
     uint32_t indices[] = {swapchainIndex};
     VkPresentInfoKHR present {
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
             .pNext = nullptr,
-            .waitSemaphoreCount = 0, // 1,
-            .pWaitSemaphores = nullptr, // &draw_completed_semaphores[swapchainIndex],
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = &draw_completed_semaphores[swapchainIndex],
             .swapchainCount = 1,
             .pSwapchains = &swapchain,
             .pImageIndices = indices,
@@ -751,11 +782,9 @@ static void DrawFrame(GLFWwindow *window)
     };
     VK_CHECK(vkQueuePresentKHR(queue, &present));
     swapchainIndex = (swapchainIndex + 1) % swapchainImageCount;
-
-    printf("presented?!\n");
 }
 
-int main(int argc, char **argv)
+int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv)
 {
     be_noisy = (getenv("BE_NOISY") != nullptr);
     enable_validation = (getenv("VALIDATE") != nullptr);
@@ -876,7 +905,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCount, swapchainImages.data()));
 
     VkFormat depthFormat = VK_FORMAT_D16_UNORM;
-    VkImageCreateInfo createDepthInfo{
+    VkImageCreateInfo createDepthInfo {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
         .pNext = NULL,
         .flags = 0,
@@ -976,7 +1005,7 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .attachment = 1,
         .layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
     };
-    VkSubpassDescription subpass{
+    VkSubpassDescription subpass {
         .flags = 0,
         .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
         .inputAttachmentCount = 0,
@@ -1095,12 +1124,14 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
         .lineWidth = 1.0f,
     };
 
-    VkPipelineColorBlendAttachmentState att_state[1];
-    memset(att_state, 0, sizeof(att_state));
-    att_state[0].colorWriteMask = 0xf;
-    att_state[0].blendEnable = VK_FALSE;
+    VkPipelineColorBlendAttachmentState att_state[1] = {
+        {
+            .colorWriteMask = 0xf,
+            .blendEnable = VK_FALSE,
+        },
+    };
 
-    VkPipelineColorBlendStateCreateInfo color_blend_state{
+    VkPipelineColorBlendStateCreateInfo color_blend_state {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
         .pNext = nullptr,
         .attachmentCount = 1,
@@ -1108,10 +1139,10 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     };
 
     VkStencilOpState keep_always{ .failOp = VK_STENCIL_OP_KEEP, .passOp = VK_STENCIL_OP_KEEP, .compareOp = VK_COMPARE_OP_ALWAYS };
-    VkPipelineDepthStencilStateCreateInfo depth_stencil_state{
+    VkPipelineDepthStencilStateCreateInfo depth_stencil_state {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
         .pNext = nullptr,
-        .depthTestEnable = VK_TRUE,
+        .depthTestEnable = VK_FALSE, // VK_TRUE,
         .depthWriteEnable = VK_TRUE,
         .depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
         .depthBoundsTestEnable = VK_FALSE,
@@ -1143,15 +1174,10 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     };
 
     std::vector<uint32_t> vertex_shader_code = load_code("testing.vert");
-    printf("vert spir-v: %zd words (%x %x %x ... )\n", vertex_shader_code.size(), vertex_shader_code[0], vertex_shader_code[1], vertex_shader_code[2]);
     VkShaderModule vertex_shader_module = create_shader_module(vertex_shader_code);
 
     std::vector<uint32_t> fragment_shader_code = load_code("testing.frag");
-    printf("frag spir-v: %zd words (%x %x %x ... )\n", fragment_shader_code.size(), fragment_shader_code[0], fragment_shader_code[1], fragment_shader_code[2]);
     VkShaderModule fragment_shader_module = create_shader_module(fragment_shader_code);
-
-    printf("vert module = %p\n", vertex_shader_module);
-    printf("frag module = %p\n", fragment_shader_module);
 
     VkPipelineShaderStageCreateInfo vertexShaderCreate {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -1214,14 +1240,14 @@ The pseudocode for initializing Vulkan and drawing an indexed, textured triangle
     VkFenceCreateInfo fence_create = {
         .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
         .pNext = NULL,
-        .flags = 0,
+        .flags = VK_FENCE_CREATE_SIGNALED_BIT,
     };
-    draw_completed_fences.resize(swapchainImageCount);
-    for(uint32_t i = 0; i < swapchainImageCount; i++) {
+    draw_completed_fences.resize(MAX_IN_FLIGHT);
+    for(uint32_t i = 0; i < draw_completed_fences.size(); i++) {
         VK_CHECK(vkCreateFence(device, &fence_create, nullptr, &draw_completed_fences[i]));
     }
 
-    // glfwSetKeyCallback(window, KeyCallback);
+    glfwSetKeyCallback(window, KeyCallback);
     // glfwSetMouseButtonCallback(window, ButtonCallback);
     // glfwSetCursorPosCallback(window, MotionCallback);
     // glfwSetScrollCallback(window, ScrollCallback);
