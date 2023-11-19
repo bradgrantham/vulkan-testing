@@ -22,3 +22,8 @@ target_include_directories(vulkan_test PRIVATE ${Vulkan_INCLUDE_DIRS})
 # target_include_directories(vulkan_test PRIVATE ${GLFW_INCLUDE_DIR})
 set_property(TARGET vulkan_test PROPERTY CXX_STANDARD 20)
 
+if(MSVC)
+  target_compile_options(vulkan_test PRIVATE /W4 /WX)
+else()
+  target_compile_options(vulkan_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+endif()
