@@ -44,6 +44,8 @@ std::map<VkResult, std::string> vkresult_name_map =
     {VK_ERROR_FEATURE_NOT_PRESENT, "FEATURE_NOT_PRESENT"},
 };
 
+extern "C" { extern void DebugBreak(void); }
+
 #define VK_CHECK(f) \
 { \
     VkResult result = (f); \
@@ -54,6 +56,7 @@ std::map<VkResult, std::string> vkresult_name_map =
 	} else { \
 	    std::cerr << "VkResult from " STR(f) " was " << result << " at line " << __LINE__ << "\n"; \
         } \
+        DebugBreak(); \
 	exit(EXIT_FAILURE); \
     } \
 }
@@ -380,49 +383,7 @@ VkViewport calculate_viewport(uint32_t windowWidth, uint32_t windowHeight)
     return viewport;
 }
 
-
-namespace VulkanApp
-{
-
-VkInstance instance;
-VkPhysicalDevice physical_device;
-VkDevice device;
-VkPhysicalDeviceMemoryProperties memory_properties;
-uint32_t preferred_queue_family = NO_QUEUE_FAMILY;
-VkQueue queue;
-VkCommandPool command_pool;
-VkSurfaceKHR surface;
-VkSwapchainKHR swapchain;
-uint32_t swapchainIndex;
-std::vector<VkCommandBuffer> commandBuffers;
-uint32_t swapchainImageCount = 3;
-std::vector<VkImage> swapchainImages;
-std::vector<VkSemaphore> image_acquired_semaphores;
-std::vector<VkSemaphore> draw_completed_semaphores;
-std::vector<VkFence> draw_completed_fences;
-int draw_submission_index = 0;
-VkRenderPass renderPass;
-VkPipeline pipeline;
-std::vector<VkFramebuffer> framebuffers;
-
-buffer vertex_buffer;
-buffer index_buffer;
-
-void print_implementation_information()
-{
-    uint32_t ext_count;
-    vkEnumerateInstanceExtensionProperties(nullptr, &ext_count, nullptr);
-    std::unique_ptr<VkExtensionProperties[]> exts(new VkExtensionProperties[ext_count]);
-    vkEnumerateInstanceExtensionProperties(nullptr, &ext_count, exts.get());
-    if(be_noisy) {
-        printf("Vulkan instance extensions:\n");
-        for(uint32_t i = 0; i < ext_count; i++) {
-            printf("\t%s, %08X\n", exts[i].extensionName, exts[i].specVersion);
-        }
-    }
-}
-
-void create_device(VkPhysicalDevice physical_device, VkDevice* device)
+void create_device(VkPhysicalDevice physical_device, uint32_t preferred_queue_family, VkDevice* device, VkQueue* queue)
 {
     std::vector<const char*> extensions;
 
@@ -466,7 +427,48 @@ void create_device(VkPhysicalDevice physical_device, VkDevice* device)
     create.ppEnabledExtensionNames = extensions.data();
     VK_CHECK(vkCreateDevice(physical_device, &create, nullptr, device));
 
-    vkGetDeviceQueue(*device, preferred_queue_family, 0, &queue);
+    vkGetDeviceQueue(*device, preferred_queue_family, 0, queue);
+}
+
+namespace VulkanApp
+{
+
+VkInstance instance;
+VkPhysicalDevice physical_device;
+VkDevice device;
+VkPhysicalDeviceMemoryProperties memory_properties;
+uint32_t preferred_queue_family = NO_QUEUE_FAMILY;
+VkQueue queue;
+VkCommandPool command_pool;
+VkSurfaceKHR surface;
+VkSwapchainKHR swapchain;
+uint32_t swapchainIndex;
+std::vector<VkCommandBuffer> commandBuffers;
+uint32_t swapchainImageCount = 3;
+std::vector<VkImage> swapchainImages;
+std::vector<VkSemaphore> image_acquired_semaphores;
+std::vector<VkSemaphore> draw_completed_semaphores;
+std::vector<VkFence> draw_completed_fences;
+int draw_submission_index = 0;
+VkRenderPass renderPass;
+VkPipeline pipeline;
+std::vector<VkFramebuffer> framebuffers;
+
+buffer vertex_buffer;
+buffer index_buffer;
+
+void print_implementation_information()
+{
+    uint32_t ext_count;
+    vkEnumerateInstanceExtensionProperties(nullptr, &ext_count, nullptr);
+    std::unique_ptr<VkExtensionProperties[]> exts(new VkExtensionProperties[ext_count]);
+    vkEnumerateInstanceExtensionProperties(nullptr, &ext_count, exts.get());
+    if(be_noisy) {
+        printf("Vulkan instance extensions:\n");
+        for(uint32_t i = 0; i < ext_count; i++) {
+            printf("\t%s, %08X\n", exts[i].extensionName, exts[i].specVersion);
+        }
+    }
 }
 
 // geometry data
@@ -637,7 +639,7 @@ void init_vulkan(int windowWidth, int windowHeight)
         print_device_information(physical_device, memory_properties);
     }
 
-    create_device(physical_device, &device);
+    create_device(physical_device, preferred_queue_family, &device, &queue);
 
     uint32_t formatCount;
     VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, nullptr));
@@ -1121,7 +1123,7 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
     draw_submission_index = (draw_submission_index + 1) % MAX_IN_FLIGHT;
 
     // 13. Present the rendered result
-    uint32_t indices[] = {swapchainIndex};
+    uint32_t swapchainIndices[] = {swapchainIndex};
     VkPresentInfoKHR present {
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
             .pNext = nullptr,
@@ -1129,7 +1131,7 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
             .pWaitSemaphores = &draw_completed_semaphores[swapchainIndex],
             .swapchainCount = 1,
             .pSwapchains = &swapchain,
-            .pImageIndices = indices,
+            .pImageIndices = swapchainIndices,
             .pResults = nullptr,
     };
     VK_CHECK(vkQueuePresentKHR(queue, &present));
