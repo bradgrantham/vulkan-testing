@@ -32,7 +32,9 @@
 
 // Styled somewhat after Sascha Willem's triangle
 
+#if defined(_WIN32)
 #pragma warning( disable : 4459 ) // Fix this by making container for these globals, pull methods into it, call methods from main
+#endif // _WIN32
 VkInstance instance;
 VkPhysicalDevice physical_device;
 const uint32_t NO_QUEUE_FAMILY = 0xffffffff;
