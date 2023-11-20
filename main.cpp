@@ -469,41 +469,6 @@ void create_device(VkPhysicalDevice physical_device, VkDevice* device)
     vkGetDeviceQueue(*device, preferred_queue_family, 0, &queue);
 }
 
-void init_vulkan()
-{
-    print_implementation_information();
-    create_instance(&instance);
-    // get physical device surface support functions
-    // get swapchain functions
-    choose_physical_device(instance, &physical_device);
-    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
-
-    uint32_t queue_family_count;
-    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, nullptr);
-    std::unique_ptr<VkQueueFamilyProperties[]> queue_families(new VkQueueFamilyProperties[queue_family_count]);
-    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.get());
-    for(uint32_t i = 0; i < queue_family_count; i++) {
-        if(queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-            preferred_queue_family = i;
-        }
-    }
-
-    if(preferred_queue_family == NO_QUEUE_FAMILY) {
-	std::cerr << "no desired queue family was found\n";
-	exit(EXIT_FAILURE);
-    }
-
-    if(be_noisy) {
-        print_device_information(physical_device, memory_properties);
-    }
-
-    create_device(physical_device, &device);
-}
-
-void cleanup_vulkan()
-{
-}
-
 // geometry data
 static vertex vertices[3] = {
     {{-.5, .5, .5}, {1, 0, 0}},
@@ -539,7 +504,6 @@ void create_vertex_buffers()
     create_staging_buffer.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
     create_staging_buffer.pNext = nullptr;
     create_staging_buffer.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
-
 
     // Create a buffer for vertices, allocate memory, map it, copy vertices to the memory, unmap, and then bind the vertex buffer to that memory.
     create_staging_buffer.size = sizeof(vertices);
@@ -642,154 +606,38 @@ void create_vertex_buffers()
     vkFreeMemory(device, index_staging.mem, nullptr);
 }
 
-static void DrawFrame([[maybe_unused]] GLFWwindow *window)
+void init_vulkan_instance()
 {
-    VK_CHECK(vkWaitForFences(device, 1, &draw_completed_fences[draw_submission_index], VK_TRUE, DEFAULT_FENCE_TIMEOUT));
-    VK_CHECK(vkResetFences(device, 1, &draw_completed_fences[draw_submission_index]));
-
-    VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, image_acquired_semaphores[swapchainIndex], VK_NULL_HANDLE, &swapchainIndex));
-
-    int windowWidth, windowHeight;
-    glfwGetWindowSize(window, &windowWidth, &windowHeight);
-
-    auto cb = commandBuffers[swapchainIndex];
-
-    VkCommandBufferBeginInfo begin {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-        .pNext = nullptr,
-        .flags = 0, // VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
-        .pInheritanceInfo = nullptr,
-    };
-    VK_CHECK(vkResetCommandBuffer(cb, 0));
-    VK_CHECK(vkBeginCommandBuffer(cb, &begin));
-    const VkClearValue clearValues [2] {
-        {.color {.float32 {0.1f, 0.1f, 0.2f, 1.0f}}},
-        {.depthStencil = {1.0f, 0}},
-    };
-    VkRenderPassBeginInfo beginRenderpass {
-        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-        .pNext = nullptr,
-        .renderPass = renderPass,
-        .framebuffer = framebuffers[swapchainIndex],
-        .renderArea = {{0, 0}, {static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight)}},
-        .clearValueCount = static_cast<uint32_t>(std::size(clearValues)),
-        .pClearValues = clearValues,
-    };
-    vkCmdBeginRenderPass(cb, &beginRenderpass, VK_SUBPASS_CONTENTS_INLINE);
-
-    // 6. Bind the graphics pipeline state
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-
-    // vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1,
-    // descriptor_set[swapchainIndex], 0, NULL);
-
-    // 8. Bind the texture resources - NA
-
-    // 7. Bind the vertex and swapchainIndex buffers
-    VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(cb, 0, 1, &vertex_buffer.buf, &offset);
-    vkCmdBindIndexBuffer(cb, index_buffer.buf, 0, VK_INDEX_TYPE_UINT32);
-
-    // 9. Set viewport and scissor parameters
-    VkViewport viewport = calculate_viewport(static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowWidth));
-    vkCmdSetViewport(cb, 0, 1, &viewport);
-
-    VkRect2D scissor {
-        .offset{0, 0},
-        .extent{static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight)}};
-    vkCmdSetScissor(cb, 0, 1, &scissor);
-
-    vkCmdDrawIndexed(cb, triangleCount * 3, 1, 0, 0, 0);
-    vkCmdEndRenderPass(cb);
-    VK_CHECK(vkEndCommandBuffer(cb));
-
-    VkPipelineStageFlags waitdststagemask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
-    VkSubmitInfo submit {
-        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .pNext = nullptr,
-        .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &image_acquired_semaphores[swapchainIndex],
-        .pWaitDstStageMask = &waitdststagemask,
-        .commandBufferCount = 1,
-        .pCommandBuffers = &cb,
-        .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &draw_completed_semaphores[swapchainIndex],
-    };
-    VK_CHECK(vkQueueSubmit(queue, 1, &submit, draw_completed_fences[draw_submission_index]));
-    draw_submission_index = (draw_submission_index + 1) % MAX_IN_FLIGHT;
-
-    // 13. Present the rendered result
-    uint32_t indices[] = {swapchainIndex};
-    VkPresentInfoKHR present {
-        .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-            .pNext = nullptr,
-            .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &draw_completed_semaphores[swapchainIndex],
-            .swapchainCount = 1,
-            .pSwapchains = &swapchain,
-            .pImageIndices = indices,
-            .pResults = nullptr,
-    };
-    VK_CHECK(vkQueuePresentKHR(queue, &present));
-    swapchainIndex = (swapchainIndex + 1) % swapchainImageCount;
+    print_implementation_information();
+    create_instance(&instance);
 }
 
-};
-
-static void error_callback([[maybe_unused]] int error, const char* description)
+void init_vulkan(int windowWidth, int windowHeight)
 {
-    fprintf(stderr, "GLFW: %s\n", description);
-}
+    // get swapchain functions
+    choose_physical_device(instance, &physical_device);
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
 
-static void KeyCallback(GLFWwindow *window, int key, [[maybe_unused]] int scancode, int action, [[maybe_unused]] int mods)
-{
-    if(action == GLFW_PRESS) {
-        switch(key) {
-            case 'Q': case GLFW_KEY_ESCAPE: case '\033':
-                glfwSetWindowShouldClose(window, GL_TRUE);
-                break;
+    uint32_t queue_family_count;
+    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, nullptr);
+    std::unique_ptr<VkQueueFamilyProperties[]> queue_families(new VkQueueFamilyProperties[queue_family_count]);
+    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.get());
+    for(uint32_t i = 0; i < queue_family_count; i++) {
+        if(queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+            preferred_queue_family = i;
         }
     }
-}
 
-int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv)
-{
-    using namespace VulkanApp;
-
-    be_noisy = (getenv("BE_NOISY") != nullptr);
-    enable_validation = (getenv("VALIDATE") != nullptr);
-    do_the_wrong_thing = (getenv("BE_WRONG") != nullptr);
-
-    glfwSetErrorCallback(error_callback);
-
-    if(!glfwInit()) {
-	std::cerr << "GLFW initialization failed.\n";
-        exit(EXIT_FAILURE);
+    if(preferred_queue_family == NO_QUEUE_FAMILY) {
+	std::cerr << "no desired queue family was found\n";
+	exit(EXIT_FAILURE);
     }
 
-    if (!glfwVulkanSupported()) {
-	std::cerr << "GLFW reports Vulkan is not supported\n";
-        exit(EXIT_FAILURE);
+    if(be_noisy) {
+        print_device_information(physical_device, memory_properties);
     }
 
-    VulkanApp::init_vulkan();
-
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow* window = glfwCreateWindow(512, 512, "vulkan test", nullptr, nullptr);
-
-    VkResult err = glfwCreateWindowSurface(instance, window, nullptr, &surface);
-    if (err) {
-	std::cerr << "GLFW window creation failed " << err << "\n";
-        exit(EXIT_FAILURE);
-    }
-	
-    // PFN_vkCmdTraceRaysKHR cmdTraceRaysKHR = (PFN_vkCmdTraceRaysKHR)vkGetInstanceProcAddr(instance, "vkCmdTraceRaysKHR");
-    // assert(cmdTraceRaysKHR);
-
-    printf("success creating device and window!\n");
-
-    int windowWidth, windowHeight;
-    glfwGetWindowSize(window, &windowWidth, &windowHeight);
+    create_device(physical_device, &device);
 
     uint32_t formatCount;
     VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, nullptr));
@@ -1018,11 +866,6 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv)
         VK_CHECK(vkCreateFramebuffer(device, &framebufferCreate, nullptr, &framebuffers[i]));
     }
 
-#if 0
-9. Allocate memory for vertex and index buffers
-10. Create a VkBuffer for each of them
-#endif
-
     create_vertex_buffers();
     printf("success creating buffers!\n");
 
@@ -1195,6 +1038,157 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv)
     for(uint32_t i = 0; i < draw_completed_fences.size(); i++) {
         VK_CHECK(vkCreateFence(device, &fence_create, nullptr, &draw_completed_fences[i]));
     }
+}
+
+void cleanup_vulkan()
+{
+}
+
+static void DrawFrame([[maybe_unused]] GLFWwindow *window)
+{
+    VK_CHECK(vkWaitForFences(device, 1, &draw_completed_fences[draw_submission_index], VK_TRUE, DEFAULT_FENCE_TIMEOUT));
+    VK_CHECK(vkResetFences(device, 1, &draw_completed_fences[draw_submission_index]));
+
+    VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, image_acquired_semaphores[swapchainIndex], VK_NULL_HANDLE, &swapchainIndex));
+
+    int windowWidth, windowHeight;
+    glfwGetWindowSize(window, &windowWidth, &windowHeight);
+
+    auto cb = commandBuffers[swapchainIndex];
+
+    VkCommandBufferBeginInfo begin {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .pNext = nullptr,
+        .flags = 0, // VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        .pInheritanceInfo = nullptr,
+    };
+    VK_CHECK(vkResetCommandBuffer(cb, 0));
+    VK_CHECK(vkBeginCommandBuffer(cb, &begin));
+    const VkClearValue clearValues [2] {
+        {.color {.float32 {0.1f, 0.1f, 0.2f, 1.0f}}},
+        {.depthStencil = {1.0f, 0}},
+    };
+    VkRenderPassBeginInfo beginRenderpass {
+        .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
+        .pNext = nullptr,
+        .renderPass = renderPass,
+        .framebuffer = framebuffers[swapchainIndex],
+        .renderArea = {{0, 0}, {static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight)}},
+        .clearValueCount = static_cast<uint32_t>(std::size(clearValues)),
+        .pClearValues = clearValues,
+    };
+    vkCmdBeginRenderPass(cb, &beginRenderpass, VK_SUBPASS_CONTENTS_INLINE);
+
+    // 6. Bind the graphics pipeline state
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+
+    // vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1,
+    // descriptor_set[swapchainIndex], 0, NULL);
+
+    // 8. Bind the texture resources - NA
+
+    // 7. Bind the vertex and swapchainIndex buffers
+    VkDeviceSize offset = 0;
+    vkCmdBindVertexBuffers(cb, 0, 1, &vertex_buffer.buf, &offset);
+    vkCmdBindIndexBuffer(cb, index_buffer.buf, 0, VK_INDEX_TYPE_UINT32);
+
+    // 9. Set viewport and scissor parameters
+    VkViewport viewport = calculate_viewport(static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowWidth));
+    vkCmdSetViewport(cb, 0, 1, &viewport);
+
+    VkRect2D scissor {
+        .offset{0, 0},
+        .extent{static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight)}};
+    vkCmdSetScissor(cb, 0, 1, &scissor);
+
+    vkCmdDrawIndexed(cb, triangleCount * 3, 1, 0, 0, 0);
+    vkCmdEndRenderPass(cb);
+    VK_CHECK(vkEndCommandBuffer(cb));
+
+    VkPipelineStageFlags waitdststagemask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    VkSubmitInfo submit {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pNext = nullptr,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &image_acquired_semaphores[swapchainIndex],
+        .pWaitDstStageMask = &waitdststagemask,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &cb,
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores = &draw_completed_semaphores[swapchainIndex],
+    };
+    VK_CHECK(vkQueueSubmit(queue, 1, &submit, draw_completed_fences[draw_submission_index]));
+    draw_submission_index = (draw_submission_index + 1) % MAX_IN_FLIGHT;
+
+    // 13. Present the rendered result
+    uint32_t indices[] = {swapchainIndex};
+    VkPresentInfoKHR present {
+        .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
+            .pNext = nullptr,
+            .waitSemaphoreCount = 1,
+            .pWaitSemaphores = &draw_completed_semaphores[swapchainIndex],
+            .swapchainCount = 1,
+            .pSwapchains = &swapchain,
+            .pImageIndices = indices,
+            .pResults = nullptr,
+    };
+    VK_CHECK(vkQueuePresentKHR(queue, &present));
+    swapchainIndex = (swapchainIndex + 1) % swapchainImageCount;
+}
+
+};
+
+static void error_callback([[maybe_unused]] int error, const char* description)
+{
+    fprintf(stderr, "GLFW: %s\n", description);
+}
+
+static void KeyCallback(GLFWwindow *window, int key, [[maybe_unused]] int scancode, int action, [[maybe_unused]] int mods)
+{
+    if(action == GLFW_PRESS) {
+        switch(key) {
+            case 'Q': case GLFW_KEY_ESCAPE: case '\033':
+                glfwSetWindowShouldClose(window, GL_TRUE);
+                break;
+        }
+    }
+}
+
+int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv)
+{
+    using namespace VulkanApp;
+
+    be_noisy = (getenv("BE_NOISY") != nullptr);
+    enable_validation = (getenv("VALIDATE") != nullptr);
+    do_the_wrong_thing = (getenv("BE_WRONG") != nullptr);
+
+    glfwSetErrorCallback(error_callback);
+
+    if(!glfwInit()) {
+	std::cerr << "GLFW initialization failed.\n";
+        exit(EXIT_FAILURE);
+    }
+
+    if (!glfwVulkanSupported()) {
+	std::cerr << "GLFW reports Vulkan is not supported\n";
+        exit(EXIT_FAILURE);
+    }
+
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
+    GLFWwindow* window = glfwCreateWindow(512, 512, "vulkan test", nullptr, nullptr);
+
+    int windowWidth, windowHeight;
+    glfwGetWindowSize(window, &windowWidth, &windowHeight);
+
+    VulkanApp::init_vulkan_instance();
+
+    VkResult err = glfwCreateWindowSurface(instance, window, nullptr, &surface);
+    if (err) {
+	std::cerr << "GLFW window creation failed " << err << "\n";
+        exit(EXIT_FAILURE);
+    }
+
+    VulkanApp::init_vulkan(windowWidth, windowHeight);
 
     glfwSetKeyCallback(window, KeyCallback);
     // glfwSetMouseButtonCallback(window, ButtonCallback);
@@ -1217,100 +1211,3 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv)
 
     glfwTerminate();
 }
-
-#if 0
-THis is from vkcube, functions piped through uniq
-vkCreateInstance                                create instance
-vkEnumeratePhysicalDevices                      what physical devices exist
-vkGetPhysicalDeviceProperties                   using this and the next 2 funcs, choose a physical device that meets our needs
-vkGetPhysicalDeviceQueueFamilyProperties        
-vkGetPhysicalDeviceFeatures
-vkCreateWin32SurfaceKHR                         create a render target
-vkGetPhysicalDeviceSurfaceSupportKHR            repeat until we have the one we want that also meets other needs?
-vkCreateDevice                                  then create a device 
-vkGetPhysicalDeviceImageFormatProperties2       get image format props
-vkGetPhysicalDeviceQueueFamilyProperties        get device queue props, repeat until find one suitable
-vkGetDeviceQueue                                then get a queue for the device?
-vkGetPhysicalDeviceSurfaceFormatsKHR            get surface formats for the device to use to make swapchain
-vkCreateFence                                   create fence
-vkCreateSemaphore                               create sema
-vkCreateFence                                   create fence
-vkCreateSemaphore                               create sema
-vkGetPhysicalDeviceMemoryProperties             get properties for memory types and heaps
-vkGetPhysicalDeviceSurfaceCapabilitiesKHR       get what the surface is capable of
-vkGetPhysicalDeviceSurfacePresentModesKHR       get surface presentation modes e.g. immediate vs FIFO
-vkCreateSwapchainKHR                            create swapchain
-vkGetSwapchainImagesKHR                         get images backing the swapchain
-vkCreateImageView                               create ImageView that will be used to...?
-vkCreateCommandPool                             create command pool - command buffers are allocated from here?
-vkAllocateCommandBuffers                        allocate command buffers that are filled with commands
-vkBeginCommandBuffer                            open a command buffer
-vkCreateImage                                   create an image, no memory backs it yet
-vkGetImageMemoryRequirements                    get size of memory required for image
-vkAllocateMemory                                allocate it
-vkBindImageMemory                               bind image and memory together
-vkCreateImageView                               Create image view
-vkGetPhysicalDeviceFormatProperties             get info about the format on the device, like optimal tiling
-vkCreateImage                                   create image
-vkGetImageMemoryRequirements                    get size required to hold image
-vkAllocateMemory                                allocate some memory
-vkBindImageMemory                               bind that memory to the image
-vkGetImageSubresourceLayout                     get e.g. the offset, row pitch, etc for a MIP slice - not an object,
-                                                this describes how the bytes for the subresource are laid out in memory
-vkMapMemory                                     map VkMemory into memory
-vkUnmapMemory                                   unmap (was presumably filled in interim)
-vkCmdPipelineBarrier                            Insert a barrier to e.g. transition memory?
-vkCreateSampler                                 create image sampler
-vkCreateImageView                               create image view
-vkCreateBuffer                                  create a buffer... but for?
-vkGetBufferMemoryRequirements                   find out how big
-vkAllocateMemory                                allocate
-vkMapMemory                                     map (and fill)
-vkBindBufferMemory                              bind buffer to memory
-vkCreateBuffer                                  create buffer
-vkGetBufferMemoryRequirements                   get size, alignment and memory type
-vkAllocateMemory                                allocate memory using those params
-vkMapMemory                                     map memory
-vkBindBufferMemory                              bind buffer to that memory
-vkCreateBuffer                                  create buffer
-vkGetBufferMemoryRequirements                   get size, alignment and memory type
-vkAllocateMemory                                allocate memory using those params
-vkMapMemory                                     map memory
-vkBindBufferMemory                              bind buffer to that memory, probably
-vkCreateDescriptorSetLayout                     a descriptor describes a piece of data that can be used by a shader
-vkCreatePipelineLayout                          a pipeline is based around the set of layouts to be used
-vkCreateRenderPass                              describes a series of framebuffer attachments, subpasses, and dependencies between subpasses (a la ordering to take advantage of ARM framebuffer storage)
-vkCreateShaderModule                            create a shader module from SPIR-V - compiled from Vulkan variant of GLSL - is vkcube's precompiled?
-vkCreatePipelineCache                           create a cache object for pipelines - vkcube populates its cache with nullptr
-vkCreateGraphicsPipelines                       create graphics pipelines - vkcube makes 1.  Contains all shaders for all stages; createinfos for the fixed-function parts of the pipeline like viewport, depth ops, multisample config; etc
-vkDestroyShaderModule                           "A shader module can be destroyed while pipelines created using its shaders are still in use."
-vkAllocateCommandBuffers                        allocate VkCommandBuffers from a command pool - vkcube makes 1 for each swapchain image
-vkCreateDescriptorPool                          create backing store for descriptor sets?
-vkAllocateDescriptorSets                        allocate descriptor sets within a pool - vkcube allocates 3; 1 for each swapchain
-vkUpdateDescriptorSets                          fill descriptor sets with data
-vkAllocateDescriptorSets                        #2
-vkUpdateDescriptorSets                          #2
-vkAllocateDescriptorSets                        #3
-vkUpdateDescriptorSets                          #3
-vkCreateFramebuffer                             create a framebuffer object which binds together ImageViews
-vkBeginCommandBuffer                            begin a command buffer
-vkCmdBeginRenderPass                            begin a "render pass"
-vkCmdBindPipeline                               bind a pipeline (e.g. from vkCreateGraphicsPipelines)
-vkCmdBindDescriptorSets                         bind descriptor sets (filled/updated with vkUpdateDescriptorSets)
-vkCmdSetViewport                                set drawing viewport
-vkCmdSetScissor                                 set drawing scissor
-vkCmdDraw                                       draw some primitives
-vkCmdEndRenderPass                              end a "render pass"
-vkEndCommandBuffer                              end that command buffer
-vkCreateFence                                   create a fence
-vkQueueSubmit                                   submit all the stuff created in a command buffer including signaling the fence just created
-vkWaitForFences                                 wait on those fences
-vkFreeCommandBuffers                            free command buffers
-vkDestroyFence                                  destroy fence we just created
-vkWaitForFences                                 wait on frame fences but none has been issued at this point
-vkResetFences                                   reset those fences
-vkAcquireNextImageKHR                           acquire the index of the next image that is available
-vkQueueSubmit                                   submit command buffers to queue
-vkQueuePresentKHR                               queue a present of an image
-vkWaitForFences                                 wait for frame fences
-#endif
