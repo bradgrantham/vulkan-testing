@@ -44,8 +44,6 @@ std::map<VkResult, std::string> vkresult_name_map =
     {VK_ERROR_FEATURE_NOT_PRESENT, "FEATURE_NOT_PRESENT"},
 };
 
-extern "C" { extern void DebugBreak(void); }
-
 #define VK_CHECK(f) \
 { \
     VkResult result = (f); \
@@ -56,7 +54,6 @@ extern "C" { extern void DebugBreak(void); }
 	} else { \
 	    std::cerr << "VkResult from " STR(f) " was " << result << " at line " << __LINE__ << "\n"; \
         } \
-        DebugBreak(); \
 	exit(EXIT_FAILURE); \
     } \
 }
