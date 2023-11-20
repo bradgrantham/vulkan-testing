@@ -152,11 +152,6 @@ uint32_t getMemoryTypeIndex(VkPhysicalDeviceMemoryProperties memory_properties, 
 static constexpr uint32_t NO_QUEUE_FAMILY = 0xffffffff;
 static constexpr int MAX_IN_FLIGHT = 2;
 
-bool be_noisy = true;
-bool enable_validation = false;
-bool dump_vulkan_calls = false;
-bool do_the_wrong_thing = false;
-
 struct Vertex {
     float v[3];
     float c[3];
@@ -167,7 +162,7 @@ struct Buffer {
     VkBuffer buf;
 };
 
-void CreateInstance(VkInstance* instance)
+void CreateInstance(VkInstance* instance, bool enableValidation)
 {
     std::set<std::string> extension_set;
     std::set<std::string> layer_set;
@@ -186,11 +181,8 @@ void CreateInstance(VkInstance* instance)
     extension_set.insert(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
 #endif
 
-    if(enable_validation) {
+    if(enableValidation) {
 	layer_set.insert("VK_LAYER_KHRONOS_validation");
-    }
-    if(dump_vulkan_calls) {
-	layer_set.insert("VK_LAYER_LUNARG_api_dump");
     }
 
     [&](const std::set<std::string> &extension_set, const std::set<std::string> &layer_set) {
@@ -229,11 +221,11 @@ void CreateInstance(VkInstance* instance)
     }(extension_set, layer_set);
 }
 
-void ChoosePhysicalDevice(VkInstance instance, VkPhysicalDevice* physical_device)
+void ChoosePhysicalDevice(VkInstance instance, VkPhysicalDevice* physical_device, bool beVerbose)
 {
     uint32_t gpu_count = 0;
     VK_CHECK(vkEnumeratePhysicalDevices(instance, &gpu_count, nullptr));
-    if(be_noisy) {
+    if(beVerbose) {
         std::cerr << gpu_count << " gpus enumerated\n";
     }
     VkPhysicalDevice physical_devices[32];
@@ -300,17 +292,15 @@ void PrintDeviceInformation(VkPhysicalDevice physical_device, VkPhysicalDeviceMe
     vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, nullptr);
     std::unique_ptr<VkQueueFamilyProperties[]> queue_families(new VkQueueFamilyProperties[queue_family_count]);
     vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.get());
-    if(be_noisy) {
-        for(uint32_t i = 0; i < queue_family_count; i++) {
-            printf("queue %d:\n", i);
-            printf("    flags:                       %04X\n", queue_families[i].queueFlags);
-            printf("    queueCount:                  %d\n", queue_families[i].queueCount);
-            printf("    timestampValidBits:          %d\n", queue_families[i].timestampValidBits);
-            printf("    minImageTransferGranularity: (%d, %d, %d)\n",
-                queue_families[i].minImageTransferGranularity.width,
-                queue_families[i].minImageTransferGranularity.height,
-                queue_families[i].minImageTransferGranularity.depth);
-        }
+    for(uint32_t i = 0; i < queue_family_count; i++) {
+        printf("queue %d:\n", i);
+        printf("    flags:                       %04X\n", queue_families[i].queueFlags);
+        printf("    queueCount:                  %d\n", queue_families[i].queueCount);
+        printf("    timestampValidBits:          %d\n", queue_families[i].timestampValidBits);
+        printf("    minImageTransferGranularity: (%d, %d, %d)\n",
+            queue_families[i].minImageTransferGranularity.width,
+            queue_families[i].minImageTransferGranularity.height,
+            queue_families[i].minImageTransferGranularity.depth);
     }
 
     for(uint32_t i = 0; i < memory_properties.memoryTypeCount; i++) {
@@ -380,30 +370,8 @@ VkViewport CalculateViewport(uint32_t windowWidth, uint32_t windowHeight)
     return viewport;
 }
 
-void CreateDevice(VkPhysicalDevice physical_device, uint32_t preferred_queue_family, VkDevice* device, VkQueue* queue)
+void CreateDevice(VkPhysicalDevice physical_device, const std::vector<const char*>& extensions, uint32_t preferred_queue_family, VkDevice* device, VkQueue* queue)
 {
-    std::vector<const char*> extensions;
-
-    extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-
-#ifdef PLATFORM_MACOS
-    extensions.push_back("VK_KHR_portability_subset" /* VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME */);
-#endif
-
-#if 0
-    extensions.insert(extensions.end(), {
-        VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
-        VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
-        VK_KHR_RAY_QUERY_EXTENSION_NAME
-    });
-#endif
-
-    if(be_noisy) {
-        for(const auto &e: extensions) {
-            printf("asked for %s\n", e);
-        }
-    }
-
     VkDeviceQueueCreateInfo create_queues[1] = {};
     float queue_priorities[1] = {1.0f};
     create_queues[0].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
@@ -441,6 +409,10 @@ void PrintImplementationInformation()
 
 namespace VulkanApp
 {
+
+bool beVerbose = true;
+bool enableValidation = false;
+bool do_the_wrong_thing = false;
 
 VkInstance instance;
 VkPhysicalDevice physical_device;
@@ -485,14 +457,6 @@ void CreateGeometryBuffers()
     // Tells us how much memory and which memory types (by bit) can hold this memory
     VkMemoryRequirements memory_req{};
 
-    // Allocate memory
-    VkMemoryAllocateInfo memory_alloc{};
-    if(do_the_wrong_thing) {
-        memory_alloc.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    } else {
-        memory_alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    }
-    memory_alloc.pNext = nullptr;
 
     // Create a buffer - buffers are used for things like vertex data
     // This one will be used as the source of a transfer to a GPU-addressable
@@ -509,11 +473,18 @@ void CreateGeometryBuffers()
     // Get the size and type requirements for memory containing this buffer
     vkGetBufferMemoryRequirements(device, vertex_staging.buf, &memory_req);
 
-    memory_alloc.allocationSize = memory_req.size;
     // Find the type which this memory requires which is visible to the
     // CPU and also coherent, so when we unmap it it will be immediately
     // visible to the GPU
-    memory_alloc.memoryTypeIndex = getMemoryTypeIndex(memory_properties, memory_req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    uint32_t memoryTypeIndex = getMemoryTypeIndex(memory_properties, memory_req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+
+    // Allocate memory
+    VkMemoryAllocateInfo memory_alloc {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .pNext = nullptr,
+        .allocationSize = memory_req.size,
+        .memoryTypeIndex = memoryTypeIndex,
+    };
     VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &vertex_staging.mem));
 
     // Map the memory, fill it, and unmap it
@@ -605,25 +576,25 @@ void CreateGeometryBuffers()
 
 void InitializeInstance()
 {
-    if (be_noisy) {
+    if (beVerbose) {
         PrintImplementationInformation();
     }
-    CreateInstance(&instance);
+    CreateInstance(&instance, enableValidation);
 }
 
 void InitializeState(int windowWidth, int windowHeight)
 {
-    // get swapchain functions
-    ChoosePhysicalDevice(instance, &physical_device);
+    ChoosePhysicalDevice(instance, &physical_device, beVerbose);
     vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
 
     uint32_t queue_family_count;
     vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, nullptr);
-    std::unique_ptr<VkQueueFamilyProperties[]> queue_families(new VkQueueFamilyProperties[queue_family_count]);
-    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.get());
+    std::vector<VkQueueFamilyProperties> queue_families(queue_family_count);
+    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.data());
     for(uint32_t i = 0; i < queue_family_count; i++) {
         if(queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
             preferred_queue_family = i;
+            break;
         }
     }
 
@@ -632,11 +603,33 @@ void InitializeState(int windowWidth, int windowHeight)
 	exit(EXIT_FAILURE);
     }
 
-    if(be_noisy) {
+    if(beVerbose) {
         PrintDeviceInformation(physical_device, memory_properties);
     }
 
-    CreateDevice(physical_device, preferred_queue_family, &device, &queue);
+    std::vector<const char*> deviceExtensions;
+
+    deviceExtensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+
+#ifdef PLATFORM_MACOS
+    deviceExtensions.push_back("VK_KHR_portability_subset" /* VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME */);
+#endif
+
+#if 0
+    deviceExtensions.insert(extensions.end(), {
+        VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+        VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
+        VK_KHR_RAY_QUERY_EXTENSION_NAME
+        });
+#endif
+
+    if (beVerbose) {
+        for (const auto& e : deviceExtensions) {
+            printf("asked for %s\n", e);
+        }
+    }
+
+    CreateDevice(physical_device, deviceExtensions, preferred_queue_family, &device, &queue);
 
     uint32_t formatCount;
     VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, nullptr));
@@ -697,8 +690,6 @@ void InitializeState(int windowWidth, int windowHeight)
         };
         VK_CHECK(vkCreateImageView(device, &colorImageViewCreate, nullptr, &colorImageViews[i]));
     }
-
-    printf("success creating swapchain!\n");
 
     VkCommandPoolCreateInfo create_command_pool{
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -866,7 +857,6 @@ void InitializeState(int windowWidth, int windowHeight)
     }
 
     CreateGeometryBuffers();
-    printf("success creating buffers!\n");
 
     // Create a graphics pipeline
     VkVertexInputBindingDescription vertex_input_binding {
@@ -1157,8 +1147,8 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv)
 {
     using namespace VulkanApp;
 
-    be_noisy = (getenv("BE_NOISY") != nullptr);
-    enable_validation = (getenv("VALIDATE") != nullptr);
+    beVerbose = (getenv("BE_NOISY") != nullptr);
+    enableValidation = (getenv("VALIDATE") != nullptr);
     do_the_wrong_thing = (getenv("BE_WRONG") != nullptr);
 
     glfwSetErrorCallback(ErrorCallback);
