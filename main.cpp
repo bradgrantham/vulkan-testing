@@ -32,7 +32,7 @@ static constexpr uint64_t DEFAULT_FENCE_TIMEOUT = 100000000000;
 
 #define STR(f) #f
 
-std::map<VkResult, std::string> vkresult_name_map =
+std::map<VkResult, std::string> MapVkResultToName =
 {
     {VK_ERROR_OUT_OF_HOST_MEMORY, "OUT_OF_HOST_MEMORY"},
     {VK_ERROR_OUT_OF_DEVICE_MEMORY, "OUT_OF_DEVICE_MEMORY"},
@@ -49,8 +49,8 @@ std::map<VkResult, std::string> vkresult_name_map =
     VkResult result = (f); \
     static const std::set<VkResult> okay{VK_SUCCESS, VK_SUBOPTIMAL_KHR, VK_THREAD_IDLE_KHR, VK_THREAD_DONE_KHR, VK_OPERATION_DEFERRED_KHR, VK_OPERATION_NOT_DEFERRED_KHR}; \
     if(!okay.contains(result)) { \
-	if(vkresult_name_map.count(f) > 0) { \
-	    std::cerr << "VkResult from " STR(f) " was " << vkresult_name_map[result] << " at line " << __LINE__ << "\n"; \
+	if(MapVkResultToName.count(f) > 0) { \
+	    std::cerr << "VkResult from " STR(f) " was " << MapVkResultToName[result] << " at line " << __LINE__ << "\n"; \
 	} else { \
 	    std::cerr << "VkResult from " STR(f) " was " << result << " at line " << __LINE__ << "\n"; \
         } \
@@ -59,7 +59,7 @@ std::map<VkResult, std::string> vkresult_name_map =
 }
 
 // From vkcube.cpp
-static VkSurfaceFormatKHR pick_surface_format(const VkSurfaceFormatKHR *surfaceFormats, uint32_t count)
+static VkSurfaceFormatKHR PickSurfaceFormat(const VkSurfaceFormatKHR *surfaceFormats, uint32_t count)
 {
     // Prefer non-SRGB formats...
     for (uint32_t i = 0; i < count; i++) {
@@ -157,17 +157,17 @@ bool enable_validation = false;
 bool dump_vulkan_calls = false;
 bool do_the_wrong_thing = false;
 
-struct vertex {
+struct Vertex {
     float v[3];
     float c[3];
 };
 
-struct buffer {
+struct Buffer {
     VkDeviceMemory mem;
     VkBuffer buf;
 };
 
-void create_instance(VkInstance* instance)
+void CreateInstance(VkInstance* instance)
 {
     std::set<std::string> extension_set;
     std::set<std::string> layer_set;
@@ -229,7 +229,7 @@ void create_instance(VkInstance* instance)
     }(extension_set, layer_set);
 }
 
-void choose_physical_device(VkInstance instance, VkPhysicalDevice* physical_device)
+void ChoosePhysicalDevice(VkInstance instance, VkPhysicalDevice* physical_device)
 {
     uint32_t gpu_count = 0;
     VK_CHECK(vkEnumeratePhysicalDevices(instance, &gpu_count, nullptr));
@@ -242,7 +242,7 @@ void choose_physical_device(VkInstance instance, VkPhysicalDevice* physical_devi
     *physical_device = physical_devices[0];
 }
 
-const char* device_types[] = {
+const char* DeviceTypeDescriptions[] = {
     "other",
     "integrated GPU",
     "discrete GPU",
@@ -251,7 +251,7 @@ const char* device_types[] = {
     "unknown",
 };
 
-std::map<uint32_t, std::string> memory_property_bit_name_map = {
+std::map<uint32_t, std::string> MemoryPropertyBitToNameMap = {
     {VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, "DEVICE_LOCAL"},
     {VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT, "HOST_VISIBLE"},
     {VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, "HOST_COHERENT"},
@@ -259,10 +259,10 @@ std::map<uint32_t, std::string> memory_property_bit_name_map = {
     {VK_MEMORY_PROPERTY_LAZILY_ALLOCATED_BIT, "LAZILY_ALLOCATED"},
 };
 
-void print_memory_property_bits(VkMemoryPropertyFlags flags)
+void PrintMemoryPropertyBits(VkMemoryPropertyFlags flags)
 {
     bool add_or = false;
-    for(auto& bit : memory_property_bit_name_map) {
+    for(auto& bit : MemoryPropertyBitToNameMap) {
 	if(flags & bit.first) {
 	    printf("%s%s", add_or ? " | " : "", bit.second.c_str());
 	    add_or = true;
@@ -270,7 +270,7 @@ void print_memory_property_bits(VkMemoryPropertyFlags flags)
     }
 }
 
-void print_device_information(VkPhysicalDevice physical_device, VkPhysicalDeviceMemoryProperties &memory_properties)
+void PrintDeviceInformation(VkPhysicalDevice physical_device, VkPhysicalDeviceMemoryProperties &memory_properties)
 {
     VkPhysicalDeviceProperties properties;
     vkGetPhysicalDeviceProperties(physical_device, &properties);
@@ -281,7 +281,7 @@ void print_device_information(VkPhysicalDevice physical_device, VkPhysicalDevice
     printf("    vendor  %X\n", properties.vendorID);
     printf("    device  %X\n", properties.deviceID);
     printf("    name    %s\n", properties.deviceName);
-    printf("    type    %s\n", device_types[std::min(5, (int)properties.deviceType)]);
+    printf("    type    %s\n", DeviceTypeDescriptions[std::min(5, (int)properties.deviceType)]);
 
     uint32_t ext_count;
 
@@ -315,12 +315,12 @@ void print_device_information(VkPhysicalDevice physical_device, VkPhysicalDevice
 
     for(uint32_t i = 0; i < memory_properties.memoryTypeCount; i++) {
         printf("memory type %d: flags ", i);
-        print_memory_property_bits(memory_properties.memoryTypes[i].propertyFlags);
+        PrintMemoryPropertyBits(memory_properties.memoryTypes[i].propertyFlags);
         printf("\n");
     }
 }
 
-static std::vector<uint8_t> load_file(FILE *fp)
+static std::vector<uint8_t> GetFileContents(FILE *fp)
 {
     long int start = ftell(fp);
     fseek(fp, 0, SEEK_END);
@@ -334,15 +334,15 @@ static std::vector<uint8_t> load_file(FILE *fp)
     return data;
 }
 
-std::vector<uint32_t> load_code(const std::string& filename) 
+std::vector<uint32_t> GetFileAsCode(const std::string& filename) 
 {
-    std::vector<uint8_t> text = load_file(fopen(filename.c_str(), "rb"));
+    std::vector<uint8_t> text = GetFileContents(fopen(filename.c_str(), "rb"));
     std::vector<uint32_t> code((text.size() + sizeof(uint32_t) - 1) / sizeof(uint32_t));
     memcpy(code.data(), text.data(), text.size());
     return code;
 }
 
-VkShaderModule create_shader_module(VkDevice device, const std::vector<uint32_t>& code)
+VkShaderModule CreateShaderModule(VkDevice device, const std::vector<uint32_t>& code)
 {
     VkShaderModule module;
     VkShaderModuleCreateInfo shader_create {
@@ -357,7 +357,7 @@ VkShaderModule create_shader_module(VkDevice device, const std::vector<uint32_t>
     return module;
 }
 
-VkViewport calculate_viewport(uint32_t windowWidth, uint32_t windowHeight) 
+VkViewport CalculateViewport(uint32_t windowWidth, uint32_t windowHeight) 
 {
     float viewport_dimension;
     float viewport_x = 0.0f;
@@ -380,7 +380,7 @@ VkViewport calculate_viewport(uint32_t windowWidth, uint32_t windowHeight)
     return viewport;
 }
 
-void create_device(VkPhysicalDevice physical_device, uint32_t preferred_queue_family, VkDevice* device, VkQueue* queue)
+void CreateDevice(VkPhysicalDevice physical_device, uint32_t preferred_queue_family, VkDevice* device, VkQueue* queue)
 {
     std::vector<const char*> extensions;
 
@@ -427,6 +427,18 @@ void create_device(VkPhysicalDevice physical_device, uint32_t preferred_queue_fa
     vkGetDeviceQueue(*device, preferred_queue_family, 0, queue);
 }
 
+void PrintImplementationInformation()
+{
+    uint32_t ext_count;
+    vkEnumerateInstanceExtensionProperties(nullptr, &ext_count, nullptr);
+    std::unique_ptr<VkExtensionProperties[]> exts(new VkExtensionProperties[ext_count]);
+    vkEnumerateInstanceExtensionProperties(nullptr, &ext_count, exts.get());
+    printf("Vulkan instance extensions:\n");
+    for (uint32_t i = 0; i < ext_count; i++) {
+        printf("\t%s, %08X\n", exts[i].extensionName, exts[i].specVersion);
+    }
+}
+
 namespace VulkanApp
 {
 
@@ -451,25 +463,11 @@ VkRenderPass renderPass;
 VkPipeline pipeline;
 std::vector<VkFramebuffer> framebuffers;
 
-buffer vertex_buffer;
-buffer index_buffer;
-
-void print_implementation_information()
-{
-    uint32_t ext_count;
-    vkEnumerateInstanceExtensionProperties(nullptr, &ext_count, nullptr);
-    std::unique_ptr<VkExtensionProperties[]> exts(new VkExtensionProperties[ext_count]);
-    vkEnumerateInstanceExtensionProperties(nullptr, &ext_count, exts.get());
-    if(be_noisy) {
-        printf("Vulkan instance extensions:\n");
-        for(uint32_t i = 0; i < ext_count; i++) {
-            printf("\t%s, %08X\n", exts[i].extensionName, exts[i].specVersion);
-        }
-    }
-}
+Buffer vertex_buffer;
+Buffer index_buffer;
 
 // geometry data
-static vertex vertices[3] = {
+static Vertex vertices[3] = {
     {{-.5, .5, .5}, {1, 0, 0}},
     {{-.5, -.5, .5}, {0, 1, 0}},
     {{.5, -.5,  .5}, {0, 0, 1}},
@@ -477,11 +475,11 @@ static vertex vertices[3] = {
 static uint32_t indices[3] = {0, 1, 2}; 
 int triangleCount = 1;
 
-void create_vertex_buffers()
+void CreateGeometryBuffers()
 {
     // host-writable memory and buffers
-    buffer vertex_staging;
-    buffer index_staging;
+    Buffer vertex_staging;
+    Buffer index_staging;
     void *mapped; // when mapped, this points to the buffer
 
     // Tells us how much memory and which memory types (by bit) can hold this memory
@@ -605,16 +603,18 @@ void create_vertex_buffers()
     vkFreeMemory(device, index_staging.mem, nullptr);
 }
 
-void init_vulkan_instance()
+void InitializeInstance()
 {
-    print_implementation_information();
-    create_instance(&instance);
+    if (be_noisy) {
+        PrintImplementationInformation();
+    }
+    CreateInstance(&instance);
 }
 
-void init_vulkan(int windowWidth, int windowHeight)
+void InitializeState(int windowWidth, int windowHeight)
 {
     // get swapchain functions
-    choose_physical_device(instance, &physical_device);
+    ChoosePhysicalDevice(instance, &physical_device);
     vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
 
     uint32_t queue_family_count;
@@ -633,16 +633,16 @@ void init_vulkan(int windowWidth, int windowHeight)
     }
 
     if(be_noisy) {
-        print_device_information(physical_device, memory_properties);
+        PrintDeviceInformation(physical_device, memory_properties);
     }
 
-    create_device(physical_device, preferred_queue_family, &device, &queue);
+    CreateDevice(physical_device, preferred_queue_family, &device, &queue);
 
     uint32_t formatCount;
     VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, nullptr));
     std::unique_ptr<VkSurfaceFormatKHR[]> surfaceFormats(new VkSurfaceFormatKHR[formatCount]);
     VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, surfaceFormats.get()));
-    VkSurfaceFormatKHR surfaceFormat = pick_surface_format(surfaceFormats.get(), formatCount);
+    VkSurfaceFormatKHR surfaceFormat = PickSurfaceFormat(surfaceFormats.get(), formatCount);
     VkFormat chosenFormat = surfaceFormat.format;
     VkColorSpaceKHR chosenColorSpace = surfaceFormat.colorSpace;
 
@@ -865,13 +865,13 @@ void init_vulkan(int windowWidth, int windowHeight)
         VK_CHECK(vkCreateFramebuffer(device, &framebufferCreate, nullptr, &framebuffers[i]));
     }
 
-    create_vertex_buffers();
+    CreateGeometryBuffers();
     printf("success creating buffers!\n");
 
     // Create a graphics pipeline
     VkVertexInputBindingDescription vertex_input_binding {
         .binding = 0,
-        .stride = sizeof(vertex),
+        .stride = sizeof(Vertex),
         .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
     };
 
@@ -879,13 +879,13 @@ void init_vulkan(int windowWidth, int windowHeight)
         .location = 0,
         .binding = 0,
         .format = VK_FORMAT_R32G32B32_SFLOAT,
-        .offset = offsetof(vertex, v),
+        .offset = offsetof(Vertex, v),
     };
     VkVertexInputAttributeDescription vertex_color{
         .location = 1,
         .binding = 0,
         .format = VK_FORMAT_R32G32B32_SFLOAT,
-        .offset = offsetof(vertex, c),
+        .offset = offsetof(Vertex, c),
     };
     std::vector<VkVertexInputAttributeDescription> vertex_input_attributes{vertex_position, vertex_color};
 
@@ -964,11 +964,11 @@ void init_vulkan(int windowWidth, int windowHeight)
         .pDynamicStates = dynamicStateEnables,
     };
 
-    std::vector<uint32_t> vertex_shader_code = load_code("testing.vert");
-    VkShaderModule vertex_shader_module = create_shader_module(device, vertex_shader_code);
+    std::vector<uint32_t> vertex_shader_code = GetFileAsCode("testing.vert");
+    VkShaderModule vertex_shader_module = CreateShaderModule(device, vertex_shader_code);
 
-    std::vector<uint32_t> fragment_shader_code = load_code("testing.frag");
-    VkShaderModule fragment_shader_module = create_shader_module(device, fragment_shader_code);
+    std::vector<uint32_t> fragment_shader_code = GetFileAsCode("testing.frag");
+    VkShaderModule fragment_shader_module = CreateShaderModule(device, fragment_shader_code);
 
     VkPipelineShaderStageCreateInfo vertexShaderCreate {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
@@ -1039,7 +1039,7 @@ void init_vulkan(int windowWidth, int windowHeight)
     }
 }
 
-void cleanup_vulkan()
+void Cleanup()
 {
 }
 
@@ -1092,7 +1092,7 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
     vkCmdBindIndexBuffer(cb, index_buffer.buf, 0, VK_INDEX_TYPE_UINT32);
 
     // 9. Set viewport and scissor parameters
-    VkViewport viewport = calculate_viewport(static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowWidth));
+    VkViewport viewport = CalculateViewport(static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowWidth));
     vkCmdSetViewport(cb, 0, 1, &viewport);
 
     VkRect2D scissor {
@@ -1137,7 +1137,7 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
 
 };
 
-static void error_callback([[maybe_unused]] int error, const char* description)
+static void ErrorCallback([[maybe_unused]] int error, const char* description)
 {
     fprintf(stderr, "GLFW: %s\n", description);
 }
@@ -1161,7 +1161,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv)
     enable_validation = (getenv("VALIDATE") != nullptr);
     do_the_wrong_thing = (getenv("BE_WRONG") != nullptr);
 
-    glfwSetErrorCallback(error_callback);
+    glfwSetErrorCallback(ErrorCallback);
 
     if(!glfwInit()) {
 	std::cerr << "GLFW initialization failed.\n";
@@ -1179,7 +1179,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv)
     int windowWidth, windowHeight;
     glfwGetWindowSize(window, &windowWidth, &windowHeight);
 
-    VulkanApp::init_vulkan_instance();
+    VulkanApp::InitializeInstance();
 
     VkResult err = glfwCreateWindowSurface(instance, window, nullptr, &surface);
     if (err) {
@@ -1187,7 +1187,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv)
         exit(EXIT_FAILURE);
     }
 
-    VulkanApp::init_vulkan(windowWidth, windowHeight);
+    VulkanApp::InitializeState(windowWidth, windowHeight);
 
     glfwSetKeyCallback(window, KeyCallback);
     // glfwSetMouseButtonCallback(window, ButtonCallback);
@@ -1206,7 +1206,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv)
         // glfwWaitEvents();
     }
 
-    cleanup_vulkan();
+    Cleanup();
 
     glfwTerminate();
 }
