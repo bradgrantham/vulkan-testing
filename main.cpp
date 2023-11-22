@@ -152,15 +152,26 @@ uint32_t getMemoryTypeIndex(VkPhysicalDeviceMemoryProperties memory_properties, 
 static constexpr uint32_t NO_QUEUE_FAMILY = 0xffffffff;
 static constexpr int MAX_IN_FLIGHT = 2;
 
-struct Vertex {
+struct Vertex
+{
     float v[3];
     float c[3];
 };
 
-struct Buffer {
+struct Buffer
+{
     VkDeviceMemory mem;
     VkBuffer buf;
+    void* mapped;
 };
+
+struct VertexUniforms
+{
+    float modelview[16];
+    float modelview_normal[16];
+    float projection[16];
+};
+
 
 void CreateInstance(VkInstance* instance, bool enableValidation)
 {
@@ -430,10 +441,15 @@ std::vector<VkImage> swapchainImages;
 std::vector<VkSemaphore> image_acquired_semaphores;
 std::vector<VkSemaphore> draw_completed_semaphores;
 std::vector<VkFence> draw_completed_fences;
+std::vector<VkDescriptorSet> descriptor_sets;
+std::vector<VkFramebuffer> framebuffers;
+std::vector<Buffer> uniform_buffers;
 int draw_submission_index = 0;
+VkPipelineLayout pipeline_layout;
+VkDescriptorPool descriptor_pool;
 VkRenderPass renderPass;
 VkPipeline pipeline;
-std::vector<VkFramebuffer> framebuffers;
+VkDescriptorSetLayout descriptor_set_layout;
 
 Buffer vertex_buffer;
 Buffer index_buffer;
@@ -517,7 +533,6 @@ void CreateGeometryBuffers()
 
     // Tell Vulkan our buffer is in this memory at offset 0
     VK_CHECK(vkBindBufferMemory(device, index_staging.buf, index_staging.mem, 0));
-
 
     // This buffer will be used as the source of a transfer to a
     // GPU-addressable buffer
@@ -976,10 +991,109 @@ void InitializeState(int windowWidth, int windowHeight)
     };
     std::vector<VkPipelineShaderStageCreateInfo> shaderStages{vertexShaderCreate, fragmentShaderCreate};
 
-    VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+    VkDescriptorSetLayoutBinding binding {
+        .binding = 0,
+        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = 1,
+        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+        .pImmutableSamplers = nullptr,
+    };
+
+    VkDescriptorSetLayoutCreateInfo descriptor_set_layout_create {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .bindingCount = 1,
+        .pBindings = &binding,
+    };
+    VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptor_set_layout_create, nullptr, &descriptor_set_layout));
+
+    VkDescriptorPoolSize pool_sizes = {
+        .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = swapchainImageCount,
+    };
+    VkDescriptorPoolCreateInfo create_descriptor_pool {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .maxSets = swapchainImageCount, // XXX could limit to MAX_IN_FLIGHT?
+        .poolSizeCount = 1,
+        .pPoolSizes = &pool_sizes,
+    };
+    VK_CHECK(vkCreateDescriptorPool(device, &create_descriptor_pool, nullptr, &descriptor_pool));
+
+    descriptor_sets.resize(swapchainImageCount);
+    for(uint32_t i = 0 ; i < swapchainImageCount; i++) {
+        VkDescriptorSetAllocateInfo allocate_descriptor_set {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .pNext = nullptr,
+            .descriptorPool = descriptor_pool,
+            .descriptorSetCount = 1,
+            .pSetLayouts = &descriptor_set_layout,
+        };
+        VK_CHECK(vkAllocateDescriptorSets(device, &allocate_descriptor_set, &descriptor_sets[i]));
+    }
+
+    uniform_buffers.resize(swapchainImageCount);
+    for(uint32_t i = 0 ; i < swapchainImageCount; i++) {
+        VkBufferCreateInfo create_buffer {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .pNext = nullptr,
+            .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+            .size = sizeof(VertexUniforms),
+        };
+
+        VK_CHECK(vkCreateBuffer(device, &create_buffer, nullptr, &uniform_buffers[i].buf));
+
+        VkMemoryRequirements memory_req;
+        vkGetBufferMemoryRequirements(device, uniform_buffers[i].buf, &memory_req);
+
+        uint32_t memoryTypeIndex = getMemoryTypeIndex(memory_properties, memory_req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VkMemoryAllocateInfo memory_alloc {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .pNext = nullptr,
+            .allocationSize = memory_req.size,
+            .memoryTypeIndex = memoryTypeIndex,
+        };
+        VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &uniform_buffers[i].mem));
+        VK_CHECK(vkBindBufferMemory(device, uniform_buffers[i].buf, uniform_buffers[i].mem, 0));
+        VK_CHECK(vkMapMemory(device, uniform_buffers[i].mem, 0, sizeof(VertexUniforms), 0, &uniform_buffers[i].mapped));
+
+        float m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        memcpy(static_cast<uint8_t*>(uniform_buffers[i].mapped) + sizeof(m) * 0, m, sizeof(m));
+        memcpy(static_cast<uint8_t*>(uniform_buffers[i].mapped) + sizeof(m) * 1, m, sizeof(m));
+        memcpy(static_cast<uint8_t*>(uniform_buffers[i].mapped) + sizeof(m) * 2, m, sizeof(m));
+
+        float m2[16] = {.5, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
+        memcpy(static_cast<uint8_t*>(uniform_buffers[i].mapped) + sizeof(m2) * 0, m2, sizeof(m2));
+    }
+
+    for(uint32_t i = 0 ; i < swapchainImageCount; i++) {
+        VkDescriptorBufferInfo buffer_info {
+            .buffer = uniform_buffers[i].buf,
+            .range = sizeof(VertexUniforms),
+        };
+
+        VkWriteDescriptorSet write_descriptor_set {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .pNext = nullptr,
+            .dstSet = descriptor_sets[i],
+            .dstBinding = 0,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .pImageInfo = nullptr,
+            .pBufferInfo = &buffer_info,
+            .pTexelBufferView = nullptr,
+        };
+        vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, nullptr);
+    }
+
     VkPipelineLayoutCreateInfo create_layout {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .pNext = nullptr,
+        .setLayoutCount = 1,
+        .pSetLayouts = &descriptor_set_layout,
     };
     VK_CHECK(vkCreatePipelineLayout(device, &create_layout, nullptr, &pipeline_layout));
 
@@ -1033,10 +1147,43 @@ void Cleanup()
 {
 }
 
+void rotation(float a, float x, float y, float z, float m[16])
+{
+    float c, s, t;
+
+    c = (float)cos(a);
+    s = (float)sin(a);
+    t = 1.0f - c;
+
+    m[0] = t * x * x + c;
+    m[1] = t * x * y + s * z;
+    m[2] = t * x * z - s * y;
+    m[3] = 0;
+
+    m[4] = t * x * y - s * z;
+    m[5] = t * y * y + c;
+    m[6] = t * y * z + s * x;
+    m[7] = 0;
+
+    m[8] = t * x * z + s * y;
+    m[9] = t * y * z - s * x;
+    m[10] = t * z * z + c;
+    m[11] = 0;
+
+    m[12] = 0; m[13] = 0; m[14] = 0; m[15] = 1;
+}
+
 static void DrawFrame([[maybe_unused]] GLFWwindow *window)
 {
     VK_CHECK(vkWaitForFences(device, 1, &draw_completed_fences[draw_submission_index], VK_TRUE, DEFAULT_FENCE_TIMEOUT));
     VK_CHECK(vkResetFences(device, 1, &draw_completed_fences[draw_submission_index]));
+
+    static float frame = 0.0;
+    float time = frame / 100.0f;
+    frame += 1;
+    float m2[16];
+    rotation(time, 0, 0, 1, m2);
+    memcpy(static_cast<uint8_t*>(uniform_buffers[swapchainIndex].mapped) + sizeof(m2) * 0, m2, sizeof(m2));
 
     VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, image_acquired_semaphores[swapchainIndex], VK_NULL_HANDLE, &swapchainIndex));
 
@@ -1071,8 +1218,7 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
     // 6. Bind the graphics pipeline state
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
-    // vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1,
-    // descriptor_set[swapchainIndex], 0, NULL);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &descriptor_sets[swapchainIndex], 0, NULL);
 
     // 8. Bind the texture resources - NA
 
