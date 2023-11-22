@@ -1039,8 +1039,8 @@ void InitializeState(int windowWidth, int windowHeight)
         VkBufferCreateInfo create_buffer {
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
             .pNext = nullptr,
-            .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
             .size = sizeof(VertexUniforms),
+            .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
         };
 
         VK_CHECK(vkCreateBuffer(device, &create_buffer, nullptr, &uniform_buffers[i].buf));
@@ -1048,7 +1048,7 @@ void InitializeState(int windowWidth, int windowHeight)
         VkMemoryRequirements memory_req;
         vkGetBufferMemoryRequirements(device, uniform_buffers[i].buf, &memory_req);
 
-        uint32_t memoryTypeIndex = getMemoryTypeIndex(memory_properties, memory_req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        memoryTypeIndex = getMemoryTypeIndex(memory_properties, memory_req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         VkMemoryAllocateInfo memory_alloc {
             .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
             .pNext = nullptr,
