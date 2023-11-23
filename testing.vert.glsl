@@ -1,7 +1,9 @@
 #version 450
 
 layout (location = 0) in vec3 input_position;
-layout (location = 1) in vec3 input_color;
+layout (location = 1) in vec3 input_normal;
+layout (location = 2) in vec3 input_color;
+layout (location = 3) in vec3 input_texcoord;
 
 layout (location = 0) out vec4 outColor;
 

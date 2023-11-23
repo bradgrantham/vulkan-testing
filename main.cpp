@@ -15,6 +15,8 @@
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 
+#include "vectormath.h"
+
 #if defined(_WIN32)
 #define PLATFORM_WINDOWS
 // Windows supported
@@ -155,7 +157,24 @@ static constexpr int MAX_IN_FLIGHT = 2;
 struct Vertex
 {
     float v[3];
-    float c[3];
+    float n[3];
+    float c[4];
+    float t[2];
+    Vertex(float v_[3], float n_[3], float c_[4], float t_[2])
+    {
+        std::copy(v_, v_ + 3, v);
+        std::copy(n_, n_ + 3, n);
+        std::copy(c_, c_ + 4, c);
+        std::copy(t_, t_ + 2, t);
+    }
+    Vertex() {}
+    // Vertex(const Vertex &v_)
+    // {
+        // std::copy(v_.v, v_.v + 3, v);
+        // std::copy(v_.n, v_.n + 3, n);
+        // std::copy(v_.c, v_.c + 4, c);
+        // std::copy(v_.t, v_.t + 2, t);
+    // }
 };
 
 struct Buffer
@@ -454,14 +473,13 @@ VkDescriptorSetLayout descriptor_set_layout;
 Buffer vertex_buffer;
 Buffer index_buffer;
 
+template <typename T>
+size_t ByteCount(const std::vector<T>& v) { return sizeof(T) * v.size(); }
+
 // geometry data
-static Vertex vertices[3] = {
-    {{-.5, .5, .5}, {1, 0, 0}},
-    {{-.5, -.5, .5}, {0, 1, 0}},
-    {{.5, -.5,  .5}, {0, 0, 1}},
-};
-static uint32_t indices[3] = {0, 1, 2}; 
-int triangleCount = 1;
+std::vector<Vertex> vertices;
+std::vector<uint32_t> indices;
+int triangleCount;
 
 void CreateGeometryBuffers()
 {
@@ -483,7 +501,7 @@ void CreateGeometryBuffers()
     create_staging_buffer.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
 
     // Create a buffer for vertices, allocate memory, map it, copy vertices to the memory, unmap, and then bind the vertex buffer to that memory.
-    create_staging_buffer.size = sizeof(vertices);
+    create_staging_buffer.size = ByteCount(vertices);
     VK_CHECK(vkCreateBuffer(device, &create_staging_buffer, nullptr, &vertex_staging.buf));
 
     // Get the size and type requirements for memory containing this buffer
@@ -505,7 +523,7 @@ void CreateGeometryBuffers()
 
     // Map the memory, fill it, and unmap it
     VK_CHECK(vkMapMemory(device, vertex_staging.mem, 0, memory_alloc.allocationSize, 0, &mapped));
-    memcpy(mapped, vertices, sizeof(vertices));
+    memcpy(mapped, vertices.data(), ByteCount(vertices));
     vkUnmapMemory(device, vertex_staging.mem);
 
     // Tell Vulkan our buffer is in this memory at offset 0
@@ -513,7 +531,7 @@ void CreateGeometryBuffers()
 
 
     // Create a buffer for indices, allocate memory, map it, copy indices to the memory, unmap, and then bind the index buffer to that memory.
-    create_staging_buffer.size = sizeof(indices);
+    create_staging_buffer.size = ByteCount(indices);
     VK_CHECK(vkCreateBuffer(device, &create_staging_buffer, nullptr, &index_staging.buf));
 
     // Get the size and type requirements for memory containing this buffer
@@ -528,7 +546,7 @@ void CreateGeometryBuffers()
 
     // Map the memory, fill it, and unmap it
     VK_CHECK(vkMapMemory(device, index_staging.mem, 0, memory_alloc.allocationSize, 0, &mapped));
-    memcpy(mapped, indices, sizeof(indices));
+    memcpy(mapped, indices.data(), ByteCount(indices));
     vkUnmapMemory(device, index_staging.mem);
 
     // Tell Vulkan our buffer is in this memory at offset 0
@@ -542,7 +560,7 @@ void CreateGeometryBuffers()
     create_vertex_buffer.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 
     // Create a buffer representing vertices on the GPU
-    create_vertex_buffer.size = sizeof(vertices);
+    create_vertex_buffer.size = ByteCount(vertices);
     VK_CHECK(vkCreateBuffer(device, &create_vertex_buffer, nullptr, &vertex_buffer.buf));
 
     // Get the size and type requirements for memory containing this buffer
@@ -562,7 +580,7 @@ void CreateGeometryBuffers()
     create_index_buffer.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
 
     // Create a buffer representing indices on the GPU
-    create_index_buffer.size = sizeof(indices);
+    create_index_buffer.size = ByteCount(indices);
     VK_CHECK(vkCreateBuffer(device, &create_index_buffer, nullptr, &index_buffer.buf));
 
     // Get the size and type requirements for memory containing this buffer
@@ -577,9 +595,9 @@ void CreateGeometryBuffers()
     // Copy from staging to the GPU-local buffers
     VkCommandBuffer commands = getCommandBuffer(device, command_pool, true);
     VkBufferCopy copy = {};
-    copy.size = sizeof(vertices);
+    copy.size = ByteCount(vertices);
     vkCmdCopyBuffer(commands, vertex_staging.buf, vertex_buffer.buf, 1, &copy);
-    copy.size = sizeof(indices);
+    copy.size = ByteCount(indices);
     vkCmdCopyBuffer(commands, index_staging.buf, index_buffer.buf, 1, &copy);
     flushCommandBuffer(device, queue, command_pool, commands);
 
@@ -886,13 +904,25 @@ void InitializeState(int windowWidth, int windowHeight)
         .format = VK_FORMAT_R32G32B32_SFLOAT,
         .offset = offsetof(Vertex, v),
     };
-    VkVertexInputAttributeDescription vertex_color{
+    VkVertexInputAttributeDescription vertex_normal{
         .location = 1,
         .binding = 0,
         .format = VK_FORMAT_R32G32B32_SFLOAT,
+        .offset = offsetof(Vertex, n),
+    };
+    VkVertexInputAttributeDescription vertex_color{
+        .location = 2,
+        .binding = 0,
+        .format = VK_FORMAT_R32G32B32A32_SFLOAT,
         .offset = offsetof(Vertex, c),
     };
-    std::vector<VkVertexInputAttributeDescription> vertex_input_attributes{vertex_position, vertex_color};
+    VkVertexInputAttributeDescription vertex_texcoord{
+        .location = 3,
+        .binding = 0,
+        .format = VK_FORMAT_R32G32_SFLOAT,
+        .offset = offsetof(Vertex, t),
+    };
+    std::vector<VkVertexInputAttributeDescription> vertex_input_attributes{vertex_position, vertex_normal, vertex_color, vertex_texcoord};
 
     VkPipelineVertexInputStateCreateInfo vertex_input_state {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
@@ -1289,13 +1319,97 @@ static void KeyCallback(GLFWwindow *window, int key, [[maybe_unused]] int scanco
     }
 }
 
-int main([[maybe_unused]] int argc, [[maybe_unused]] char **argv)
+bool ParseTriSrc(FILE *fp, std::vector<Vertex>& vertices, std::vector<uint32_t>& indices)
+{
+    char texture_name[512];
+    char tag_name[512];
+    float specular_color[4];
+    float shininess;
+
+    while(fscanf(fp,"\"%[^\"]\"", texture_name) == 1) {
+        if(strcmp(texture_name, "*") == 0)
+            texture_name[0] = '\0';
+
+	if(fscanf(fp,"%s ", tag_name) != 1) {
+	    fprintf(stderr, "couldn't read tag name\n");
+	    return false;
+	}
+
+	if(fscanf(fp,"%g %g %g %g %g ", &specular_color[0], &specular_color[1],
+	    &specular_color[2], &specular_color[3], &shininess) != 5) {
+	    fprintf(stderr, "couldn't read specular properties\n");
+	    return false;
+	}
+
+	if(shininess > 0 && shininess < 1) {
+	    // shininess is not exponent - what is it?
+	    shininess *= 10;
+	}
+
+        for(int i = 0; i < 3; i++) {
+            float v[3];
+            float n[3];
+            float c[4];
+            float t[2];
+
+	    if(fscanf(fp,"%g %g %g %g %g %g %g %g %g %g %g %g ",
+	        &v[0], &v[1], &v[2],
+	        &n[0], &n[1], &n[2],
+	        &c[0], &c[1], &c[2], &c[3],
+	        &t[0], &t[1]) != 12) {
+
+		fprintf(stderr, "couldn't read Vertex\n");
+		return false;
+	    }
+            indices.push_back(vertices.size());
+            vertices.push_back(Vertex(v, n, c, t));
+        }
+
+        // MATERIAL mtl(texture_name, specular_color, shininess);
+
+        // sets.get_triangle_set(tag_name, mtl).add_triangle(verts[0], verts[1], verts[2]);
+    }
+    return true;
+}
+
+void LoadModel(const char *filename)
+{
+    using namespace VulkanApp;
+
+    FILE* fp = fopen(filename, "r");
+
+    ParseTriSrc(fp, vertices, indices);
+    triangleCount = indices.size() / 3;
+
+    fclose(fp);
+}
+
+void usage(const char *progName) 
+{
+    fprintf(stderr, "usage: %s modelFileName\n", progName);
+}
+
+int main(int argc, char **argv)
 {
     using namespace VulkanApp;
 
     beVerbose = (getenv("BE_NOISY") != nullptr);
     enableValidation = (getenv("VALIDATE") != nullptr);
     do_the_wrong_thing = (getenv("BE_WRONG") != nullptr);
+
+    const char *progName = argv[0];
+    argv++;
+    argc--;
+    while(argc > 0 && argv[0][0] == '-') {
+    }
+    if(argc != 1) {
+        fprintf(stderr, "expected a filename\n");
+        usage(progName);
+        exit(EXIT_FAILURE);
+    }
+    const char *input_filename = argv[0];
+
+    LoadModel(input_filename);
 
     glfwSetErrorCallback(ErrorCallback);
 
