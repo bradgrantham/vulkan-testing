@@ -184,13 +184,15 @@ struct Buffer
     void* mapped;
 };
 
+mat4f modelview;
+mat4f projection;
+
 struct VertexUniforms
 {
     float modelview[16];
     float modelview_normal[16];
     float projection[16];
 };
-
 
 void CreateInstance(VkInstance* instance, bool enableValidation)
 {
@@ -1089,13 +1091,6 @@ void InitializeState(int windowWidth, int windowHeight)
         VK_CHECK(vkBindBufferMemory(device, uniform_buffers[i].buf, uniform_buffers[i].mem, 0));
         VK_CHECK(vkMapMemory(device, uniform_buffers[i].mem, 0, sizeof(VertexUniforms), 0, &uniform_buffers[i].mapped));
 
-        float m[16] = {1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-        memcpy(static_cast<uint8_t*>(uniform_buffers[i].mapped) + sizeof(m) * 0, m, sizeof(m));
-        memcpy(static_cast<uint8_t*>(uniform_buffers[i].mapped) + sizeof(m) * 1, m, sizeof(m));
-        memcpy(static_cast<uint8_t*>(uniform_buffers[i].mapped) + sizeof(m) * 2, m, sizeof(m));
-
-        float m2[16] = {.5, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1};
-        memcpy(static_cast<uint8_t*>(uniform_buffers[i].mapped) + sizeof(m2) * 0, m2, sizeof(m2));
     }
 
     for(uint32_t i = 0 ; i < swapchainImageCount; i++) {
@@ -1211,9 +1206,19 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
     static float frame = 0.0;
     float time = frame / 100.0f;
     frame += 1;
-    float m2[16];
-    rotation(time, 0, 0, 1, m2);
-    memcpy(static_cast<uint8_t*>(uniform_buffers[swapchainIndex].mapped) + sizeof(m2) * 0, m2, sizeof(m2));
+
+    modelview = mat4f::rotation(time, 0, 0, 1);
+
+    mat4f modelview_3x3 = modelview;
+    modelview_3x3.m_v[12] = 0.0f;
+    modelview_3x3.m_v[13] = 0.0f;
+    modelview_3x3.m_v[14] = 0.0f;
+    mat4f modelview_normal = inverse(transpose(modelview_3x3));
+
+    uint8_t *ubo = static_cast<uint8_t*>(uniform_buffers[swapchainIndex].mapped);
+    memcpy(ubo + sizeof(mat4f) * 0, modelview.m_v, sizeof(mat4f));
+    memcpy(ubo + sizeof(mat4f) * 1, modelview_normal.m_v, sizeof(mat4f));
+    memcpy(ubo + sizeof(mat4f) * 2, projection.m_v, sizeof(mat4f));
 
     VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, image_acquired_semaphores[swapchainIndex], VK_NULL_HANDLE, &swapchainIndex));
 
