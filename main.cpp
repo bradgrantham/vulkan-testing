@@ -1200,6 +1200,9 @@ void rotation(float a, float x, float y, float z, float m[16])
 
 static void DrawFrame([[maybe_unused]] GLFWwindow *window)
 {
+    int windowWidth, windowHeight;
+    glfwGetWindowSize(window, &windowWidth, &windowHeight);
+
     VK_CHECK(vkWaitForFences(device, 1, &draw_completed_fences[draw_submission_index], VK_TRUE, DEFAULT_FENCE_TIMEOUT));
     VK_CHECK(vkResetFences(device, 1, &draw_completed_fences[draw_submission_index]));
 
@@ -1207,7 +1210,7 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
     float time = frame / 100.0f;
     frame += 1;
 
-    modelview = mat4f::rotation(time, 0, 1, 0);
+    modelview = mat4f::rotation(time, 0, 1, 0) * mat4f::translation(0, 0, -10);
 
     mat4f modelview_3x3 = modelview;
     modelview_3x3.m_v[12] = 0.0f;
@@ -1215,15 +1218,22 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
     modelview_3x3.m_v[14] = 0.0f;
     mat4f modelview_normal = inverse(transpose(modelview_3x3));
 
+    float fov = 45;
+    float nearClip = .1; // XXX - gSceneManip->m_translation[2] - gSceneManip->m_reference_size;
+    float farClip = 1000; // XXX - gSceneManip->m_translation[2] + gSceneManip->m_reference_size;
+    float frustumTop = tan(fov / 180.0f * 3.14159f / 2) * nearClip;
+    float frustumBottom = -frustumTop;
+    float frustumRight = frustumTop * windowWidth / windowHeight;
+    float frustumLeft = -frustumRight;
+    mat4f projection = mat4f::frustum(frustumLeft, frustumRight, frustumBottom, frustumTop, nearClip, farClip);
+
+
     uint8_t *ubo = static_cast<uint8_t*>(uniform_buffers[swapchainIndex].mapped);
     memcpy(ubo + sizeof(mat4f) * 0, modelview.m_v, sizeof(mat4f));
     memcpy(ubo + sizeof(mat4f) * 1, modelview_normal.m_v, sizeof(mat4f));
     memcpy(ubo + sizeof(mat4f) * 2, projection.m_v, sizeof(mat4f));
 
     VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, image_acquired_semaphores[swapchainIndex], VK_NULL_HANDLE, &swapchainIndex));
-
-    int windowWidth, windowHeight;
-    glfwGetWindowSize(window, &windowWidth, &windowHeight);
 
     auto cb = commandBuffers[swapchainIndex];
 
