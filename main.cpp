@@ -1207,7 +1207,7 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
     float time = frame / 100.0f;
     frame += 1;
 
-    modelview = mat4f::rotation(time, 0, 0, 1);
+    modelview = mat4f::rotation(time, 0, 1, 0);
 
     mat4f modelview_3x3 = modelview;
     modelview_3x3.m_v[12] = 0.0f;
@@ -1382,6 +1382,9 @@ void LoadModel(const char *filename)
     using namespace VulkanApp;
 
     FILE* fp = fopen(filename, "r");
+    if(fp == nullptr) {
+        throw "couldn't open file";
+    }
 
     ParseTriSrc(fp, vertices, indices);
     triangleCount = indices.size() / 3;
