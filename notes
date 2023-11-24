@@ -1,3 +1,1 @@
-copy manipulator.{cpp,h}, get into CMakeLists.txt
-copy over and adapt globals and GLFW callbacks from simple_spin - just one global manipulator
-Hook up manipulator matrix 
+texturing

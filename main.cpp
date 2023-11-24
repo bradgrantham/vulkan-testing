@@ -480,6 +480,14 @@ template <typename T>
 size_t ByteCount(const std::vector<T>& v) { return sizeof(T) * v.size(); }
 
 // geometry data
+
+static manipulator manip;
+int buttonPressed = -1;
+bool motionReported = true;
+double oldMouseX;
+double oldMouseY;
+float fov = 45;
+
 float zoom = 1.0;
 vec4 object_rotation{0, 0, 0, 1};
 vec3 object_translation;
@@ -1227,20 +1235,13 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
     [[maybe_unused]] static float frame = 0.0;
     frame += 1;
 
-    vec3 object_offset = vec3(0, 0, zoom);
-    mat4f camera_matrix = create_camera_matrix(object_offset);
-    mat4f object_matrix = create_object_matrix(object_rotation, object_scale, object_translation);
-
-    modelview = object_matrix * camera_matrix;
-    // modelview = mat4f::rotation(time, 0, 1, 0) * mat4f::translation(0, 0, -10);
-
+    mat4f modelview = manip.m_matrix;
     mat4f modelview_3x3 = modelview;
     modelview_3x3.m_v[12] = 0.0f;
     modelview_3x3.m_v[13] = 0.0f;
     modelview_3x3.m_v[14] = 0.0f;
     mat4f modelview_normal = inverse(transpose(modelview_3x3));
 
-    float fov = 45;
     float nearClip = .1; // XXX - gSceneManip->m_translation[2] - gSceneManip->m_reference_size;
     float farClip = 1000; // XXX - gSceneManip->m_translation[2] + gSceneManip->m_reference_size;
     float frustumTop = tan(fov / 180.0f * 3.14159f / 2) * nearClip;
@@ -1346,14 +1347,90 @@ static void ErrorCallback([[maybe_unused]] int error, const char* description)
 
 static void KeyCallback(GLFWwindow *window, int key, [[maybe_unused]] int scancode, int action, [[maybe_unused]] int mods)
 {
+    using namespace VulkanApp;
+
     if(action == GLFW_PRESS) {
         switch(key) {
+            case 'W':
+                break;
+
+            case 'R':
+                manip.m_mode = manipulator::ROTATE;
+                break;
+
+            case 'O':
+                manip.m_mode = manipulator::ROLL;
+                break;
+
+            case 'X':
+                manip.m_mode = manipulator::SCROLL;
+                break;
+
+            case 'Z':
+                manip.m_mode = manipulator::DOLLY;
+                break;
+
             case 'Q': case GLFW_KEY_ESCAPE: case '\033':
                 glfwSetWindowShouldClose(window, GL_TRUE);
                 break;
         }
     }
 }
+
+static void ButtonCallback(GLFWwindow *window, int b, int action, [[maybe_unused]] int mods)
+{
+    using namespace VulkanApp;
+
+    double x, y;
+    glfwGetCursorPos(window, &x, &y);
+
+    if(b == GLFW_MOUSE_BUTTON_1 && action == GLFW_PRESS) {
+        buttonPressed = 1;
+	oldMouseX = x;
+	oldMouseY = y;
+    } else {
+        buttonPressed = -1;
+    }
+}
+
+static void MotionCallback(GLFWwindow *window, double x, double y)
+{
+    using namespace VulkanApp;
+
+    // glfw/glfw#103
+    // If no motion has been reported yet, we catch the first motion
+    // reported and store the current location
+    if(!motionReported) {
+        motionReported = true;
+        oldMouseX = x;
+        oldMouseY = y;
+    }
+
+    double dx, dy;
+
+    dx = x - oldMouseX;
+    dy = y - oldMouseY;
+
+    oldMouseX = x;
+    oldMouseY = y;
+
+    int width, height;
+    glfwGetFramebufferSize(window, &width, &height);
+
+    if(buttonPressed == 1) {
+        manip.move(dx / width, dy / height);
+    }
+}
+
+static void ScrollCallback(GLFWwindow *window, double dx, double dy)
+{
+    using namespace VulkanApp;
+
+    int width, height;
+    glfwGetFramebufferSize(window, &width, &height);
+    manip.move(dx / width, dy / height);
+}
+
 
 bool ParseTriSrc(FILE *fp, std::vector<Vertex>& vertices, std::vector<uint32_t>& indices)
 {
@@ -1428,6 +1505,8 @@ void LoadModel(const char *filename)
     float dim = length(bounds.dim());
     object_scale = vec3(.5 / dim, .5 / dim, .5 / dim);
 
+    manip = manipulator(bounds, fov / 180.0f * 3.14159f / 2);
+
     fclose(fp);
 }
 
@@ -1487,9 +1566,9 @@ int main(int argc, char **argv)
     VulkanApp::InitializeState(windowWidth, windowHeight);
 
     glfwSetKeyCallback(window, KeyCallback);
-    // glfwSetMouseButtonCallback(window, ButtonCallback);
-    // glfwSetCursorPosCallback(window, MotionCallback);
-    // glfwSetScrollCallback(window, ScrollCallback);
+    glfwSetMouseButtonCallback(window, ButtonCallback);
+    glfwSetCursorPosCallback(window, MotionCallback);
+    glfwSetScrollCallback(window, ScrollCallback);
     // glfwSetFramebufferSizeCallback(window, ResizeCallback);
     glfwSetWindowRefreshCallback(window, DrawFrame);
 
@@ -1498,9 +1577,9 @@ int main(int argc, char **argv)
         DrawFrame(window);
 
         // if(gStreamFrames)
-            glfwPollEvents();
+            // glfwPollEvents();
         // else
-        // glfwWaitEvents();
+        glfwWaitEvents();
     }
 
     Cleanup();
