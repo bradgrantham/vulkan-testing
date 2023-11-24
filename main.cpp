@@ -1246,7 +1246,7 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
     float frustumBottom = -frustumTop;
     float frustumRight = frustumTop * windowWidth / windowHeight;
     float frustumLeft = -frustumRight;
-    mat4f projection = mat4f::frustum(frustumLeft, frustumRight, frustumBottom, frustumTop, nearClip, farClip);
+    mat4f projection = mat4f::frustum(frustumLeft, frustumRight, frustumTop, frustumBottom, nearClip, farClip);
 
     uint8_t *ubo = static_cast<uint8_t*>(uniform_buffers[swapchainIndex].mapped);
     memcpy(ubo + sizeof(mat4f) * 0, modelview.m_v, sizeof(mat4f));
@@ -1423,10 +1423,11 @@ void LoadModel(const char *filename)
     for(uint32_t i = 0; i < vertices.size(); i++) {
         bounds += vertices[i].v;
     }
-    vec3 dim = bounds.dim();
+    vec3 diagonal = bounds.dim();
+    float dim = length(diagonal);
     vec3 center = bounds.center();
     object_translation = center * -1;
-    object_scale = vec3(.5 / dim[0], .5 / dim[1], .5 / dim[2]);
+    object_scale = vec3(.5 / dim, .5 / dim, .5 / dim);
 
     fclose(fp);
 }
