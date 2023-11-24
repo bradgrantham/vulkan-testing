@@ -479,6 +479,10 @@ template <typename T>
 size_t ByteCount(const std::vector<T>& v) { return sizeof(T) * v.size(); }
 
 // geometry data
+float zoom = 1.0;
+vec4 object_rotation{0, 0, 0, 1};
+vec3 object_translation;
+vec3 object_scale;
 std::vector<Vertex> vertices;
 std::vector<uint32_t> indices;
 int triangleCount;
@@ -1198,6 +1202,19 @@ void rotation(float a, float x, float y, float z, float m[16])
     m[12] = 0; m[13] = 0; m[14] = 0; m[15] = 1;
 }
 
+mat4f create_camera_matrix(const vec3& eye)
+{
+    return mat4f::translation(-eye[0], -eye[1], -eye[2]);
+}
+
+mat4f create_object_matrix(const vec4& rotation, const vec3& scale, const vec3& translation)
+{
+    mat4f scale_matrix = mat4f::scale(scale[0], scale[1], scale[2]);
+    mat4f rotation_matrix = mat4f::rotation(-rotation[0], rotation[1], rotation[2], rotation[3]);
+    mat4f translation_matrix = mat4f::translation(translation[0], translation[1], translation[2]);
+    return translation_matrix * scale_matrix * rotation_matrix;
+}
+
 static void DrawFrame([[maybe_unused]] GLFWwindow *window)
 {
     int windowWidth, windowHeight;
@@ -1206,11 +1223,15 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
     VK_CHECK(vkWaitForFences(device, 1, &draw_completed_fences[draw_submission_index], VK_TRUE, DEFAULT_FENCE_TIMEOUT));
     VK_CHECK(vkResetFences(device, 1, &draw_completed_fences[draw_submission_index]));
 
-    static float frame = 0.0;
-    float time = frame / 100.0f;
+    [[maybe_unused]] static float frame = 0.0;
     frame += 1;
 
-    modelview = mat4f::rotation(time, 0, 1, 0) * mat4f::translation(0, 0, -10);
+    vec3 object_offset = vec3(0, 0, zoom);
+    mat4f camera_matrix = create_camera_matrix(object_offset);
+    mat4f object_matrix = create_object_matrix(object_rotation, object_scale, object_translation);
+
+    modelview = object_matrix * camera_matrix;
+    // modelview = mat4f::rotation(time, 0, 1, 0) * mat4f::translation(0, 0, -10);
 
     mat4f modelview_3x3 = modelview;
     modelview_3x3.m_v[12] = 0.0f;
@@ -1226,7 +1247,6 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
     float frustumRight = frustumTop * windowWidth / windowHeight;
     float frustumLeft = -frustumRight;
     mat4f projection = mat4f::frustum(frustumLeft, frustumRight, frustumBottom, frustumTop, nearClip, farClip);
-
 
     uint8_t *ubo = static_cast<uint8_t*>(uniform_buffers[swapchainIndex].mapped);
     memcpy(ubo + sizeof(mat4f) * 0, modelview.m_v, sizeof(mat4f));
@@ -1398,6 +1418,15 @@ void LoadModel(const char *filename)
 
     ParseTriSrc(fp, vertices, indices);
     triangleCount = indices.size() / 3;
+
+    aabox bounds;
+    for(uint32_t i = 0; i < vertices.size(); i++) {
+        bounds += vertices[i].v;
+    }
+    vec3 dim = bounds.dim();
+    vec3 center = bounds.center();
+    object_translation = center * -1;
+    object_scale = vec3(.5 / dim[0], .5 / dim[1], .5 / dim[2]);
 
     fclose(fp);
 }
