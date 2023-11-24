@@ -1423,10 +1423,8 @@ void LoadModel(const char *filename)
     for(uint32_t i = 0; i < vertices.size(); i++) {
         bounds += vertices[i].v;
     }
-    vec3 diagonal = bounds.dim();
-    float dim = length(diagonal);
-    vec3 center = bounds.center();
-    object_translation = center * -1;
+    object_translation = bounds.center() * -1;
+    float dim = length(bounds.dim());
     object_scale = vec3(.5 / dim, .5 / dim, .5 / dim);
 
     fclose(fp);
