@@ -488,6 +488,15 @@ inline vec4 make_plane(const vec3& v0, const vec3& v1, const vec3& v2)
 
 struct rot4f : public vec4
 {
+    rot4f() : vec4() {};
+    rot4f(float x_, float y_, float z_, float w_) : vec4(x_, y_, z_, w_) {}
+
+    rot4f(float v) : vec4(v) {}
+
+    rot4f(const float *v) : vec4(v) {}
+
+    rot4f(float *v) : vec4(v) {}
+
     void set_axis(float x_, float y_, float z_) {
 	m_v[1] = x_;
 	m_v[2] = y_;

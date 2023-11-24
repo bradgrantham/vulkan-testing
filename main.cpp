@@ -16,6 +16,7 @@
 #include <GLFW/glfw3.h>
 
 #include "vectormath.h"
+#include "manipulator.h"
 
 #if defined(_WIN32)
 #define PLATFORM_WINDOWS

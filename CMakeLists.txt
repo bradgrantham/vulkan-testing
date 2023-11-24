@@ -15,7 +15,7 @@ if(NOT Vulkan_FOUND)
     )
 endif()
 
-add_executable(vulkan_test main.cpp vectormath.cpp)
+add_executable(vulkan_test main.cpp vectormath.cpp manipulator.cpp)
 target_link_libraries(vulkan_test glfw)
 target_link_libraries(vulkan_test ${Vulkan_LIBRARIES})
 target_include_directories(vulkan_test PRIVATE ${Vulkan_INCLUDE_DIRS})
