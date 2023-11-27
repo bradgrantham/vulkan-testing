@@ -34,7 +34,7 @@ static void drag_to_rotation(float dx, float dy, rot4f *rotation)
     dist = sqrt(dx * 10000 * dx * 10000 + dy * 10000 * dy * 10000) / 10000;
     /* dist = sqrt(dx * dx + dy * dy); */
 
-    rotation->set(M_PI * dist, dy / dist, dx / dist, 0.0f);
+    rotation->set(3.14159265358979323846f * dist, dy / dist, dx / dist, 0.0f);
 }
 
 static void calc_view_matrix(rot4f view_rotation, vec3 view_offset,
@@ -87,7 +87,7 @@ void manipulator::move(float dx, float dy)
 	    break;
 
 	case ROLL: {
-            float angle = M_PI * 2.0f * -dy;
+            float angle = 3.14159265358979323846f * 2.0f * -dy;
             m_rotation = m_rotation * rot4f(angle, 0.0f, 0.0f, 1.0f);
 	    break;
         }
@@ -118,7 +118,7 @@ manipulator::manipulator()
     m_scale.set(1, 1, 1);
 
     /* diagonal of 2-high cube */
-    m_reference_size = 3.465;
+    m_reference_size = 3.465f;
 
     m_motion_scale = 1.0;
 

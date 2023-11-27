@@ -185,9 +185,6 @@ struct Buffer
     void* mapped;
 };
 
-mat4f modelview;
-mat4f projection;
-
 struct VertexUniforms
 {
     float modelview[16];
@@ -351,7 +348,7 @@ static std::vector<uint8_t> GetFileContents(FILE *fp)
     fseek(fp, start, SEEK_SET);
 
     std::vector<uint8_t> data(end - start);
-    size_t result = fread(data.data(), 1, end - start, fp);
+    [[maybe_unused]] size_t result = fread(data.data(), 1, end - start, fp);
     assert(result == static_cast<size_t>(end - start));
 
     return data;
@@ -1242,8 +1239,8 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
     modelview_3x3.m_v[14] = 0.0f;
     mat4f modelview_normal = inverse(transpose(modelview_3x3));
 
-    float nearClip = .1; // XXX - gSceneManip->m_translation[2] - gSceneManip->m_reference_size;
-    float farClip = 1000; // XXX - gSceneManip->m_translation[2] + gSceneManip->m_reference_size;
+    float nearClip = .1f; // XXX - gSceneManip->m_translation[2] - gSceneManip->m_reference_size;
+    float farClip = 1000.0; // XXX - gSceneManip->m_translation[2] + gSceneManip->m_reference_size;
     float frustumTop = tan(fov / 180.0f * 3.14159f / 2) * nearClip;
     float frustumBottom = -frustumTop;
     float frustumRight = frustumTop * windowWidth / windowHeight;
@@ -1418,7 +1415,7 @@ static void MotionCallback(GLFWwindow *window, double x, double y)
     glfwGetFramebufferSize(window, &width, &height);
 
     if(buttonPressed == 1) {
-        manip.move(dx / width, dy / height);
+        manip.move(static_cast<float>(dx / width), static_cast<float>(dy / height));
     }
 }
 
@@ -1428,7 +1425,7 @@ static void ScrollCallback(GLFWwindow *window, double dx, double dy)
 
     int width, height;
     glfwGetFramebufferSize(window, &width, &height);
-    manip.move(dx / width, dy / height);
+    manip.move(static_cast<float>(dx / width), static_cast<float>(dy / height));
 }
 
 
@@ -1474,7 +1471,7 @@ bool ParseTriSrc(FILE *fp, std::vector<Vertex>& vertices, std::vector<uint32_t>&
 		fprintf(stderr, "couldn't read Vertex\n");
 		return false;
 	    }
-            indices.push_back(vertices.size());
+            indices.push_back(static_cast<uint32_t>(vertices.size()));
             vertices.push_back(Vertex(v, n, c, t));
         }
 
@@ -1495,7 +1492,7 @@ void LoadModel(const char *filename)
     }
 
     ParseTriSrc(fp, vertices, indices);
-    triangleCount = indices.size() / 3;
+    triangleCount = static_cast<int>(indices.size() / 3);
 
     aabox bounds;
     for(uint32_t i = 0; i < vertices.size(); i++) {
@@ -1503,7 +1500,7 @@ void LoadModel(const char *filename)
     }
     object_translation = bounds.center() * -1;
     float dim = length(bounds.dim());
-    object_scale = vec3(.5 / dim, .5 / dim, .5 / dim);
+    object_scale = vec3(.5f / dim, .5f / dim, .5f / dim);
 
     manip = manipulator(bounds, fov / 180.0f * 3.14159f / 2);
 
