@@ -82,40 +82,42 @@ static VkSurfaceFormatKHR PickSurfaceFormat(const VkSurfaceFormatKHR *surfaceFor
 }
 
 // Sascha Willem's 
-VkCommandBuffer getCommandBuffer(VkDevice device, VkCommandPool command_pool, bool begin)
+VkCommandBuffer GetCommandBuffer(VkDevice device, VkCommandPool command_pool)
 {
     VkCommandBuffer cmdBuffer;
 
-    VkCommandBufferAllocateInfo cmdBufAllocateInfo = {};
-    cmdBufAllocateInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cmdBufAllocateInfo.commandPool = command_pool;
-    cmdBufAllocateInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmdBufAllocateInfo.commandBufferCount = 1;
+    VkCommandBufferAllocateInfo cmdBufAllocateInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+        .pNext = nullptr,
+        .commandPool = command_pool,
+        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+        .commandBufferCount = 1,
+    };
 
     VK_CHECK(vkAllocateCommandBuffers(device, &cmdBufAllocateInfo, &cmdBuffer));
-
-    // If requested, also start the new command buffer
-    if (begin) {
-	VkCommandBufferBeginInfo cmdBufInfo = {};
-	cmdBufInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-	cmdBufInfo.flags = 0;
-	VK_CHECK(vkBeginCommandBuffer(cmdBuffer, &cmdBufInfo));
-    }
-
     return cmdBuffer;
 }
 
-// Sascha Willem's 
-void flushCommandBuffer(VkDevice device, VkQueue queue, VkCommandPool command_pool, VkCommandBuffer commandBuffer)
+void BeginCommandBuffer(VkCommandBuffer cmdBuffer)
+{
+    VkCommandBufferBeginInfo cmdBufInfo = {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+    };
+    VK_CHECK(vkBeginCommandBuffer(cmdBuffer, &cmdBufInfo));
+}
+
+void FlushCommandBuffer(VkDevice device, VkQueue queue, VkCommandBuffer commandBuffer)
 {
     assert(commandBuffer != VK_NULL_HANDLE);
 
-    VK_CHECK(vkEndCommandBuffer(commandBuffer));
-
-    VkSubmitInfo submitInfo = {};
-    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submitInfo.commandBufferCount = 1;
-    submitInfo.pCommandBuffers = &commandBuffer;
+    VkSubmitInfo submitInfo = {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .pNext = nullptr,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &commandBuffer,
+    };
 
     // Create fence to ensure that the command buffer has finished executing
     VkFenceCreateInfo fenceCreateInfo = {
@@ -132,7 +134,6 @@ void flushCommandBuffer(VkDevice device, VkQueue queue, VkCommandPool command_po
     VK_CHECK(vkWaitForFences(device, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
 
     vkDestroyFence(device, fence, nullptr);
-    vkFreeCommandBuffers(device, command_pool, 1, &commandBuffer);
 }
 
 // Sascha Willem's 
@@ -584,19 +585,21 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
     VK_CHECK(vkCreateCommandPool(device, &create_command_pool, nullptr, &command_pool));
 
     // Copy from staging to the GPU-local buffers
-    VkCommandBuffer commands = getCommandBuffer(device, command_pool, true);
+    VkCommandBuffer transfer_commands = GetCommandBuffer(device, command_pool);
+    BeginCommandBuffer(transfer_commands);
     VkBufferCopy copy = {};
     copy.size = ByteCount(vertices);
-    vkCmdCopyBuffer(commands, vertex_staging.buf, vertex_buffer->buf, 1, &copy);
+    vkCmdCopyBuffer(transfer_commands, vertex_staging.buf, vertex_buffer->buf, 1, &copy);
     copy.size = ByteCount(indices);
-    vkCmdCopyBuffer(commands, index_staging.buf, index_buffer->buf, 1, &copy);
-    flushCommandBuffer(device, queue, command_pool, commands);
+    vkCmdCopyBuffer(transfer_commands, index_staging.buf, index_buffer->buf, 1, &copy);
+    VK_CHECK(vkEndCommandBuffer(transfer_commands));
+    FlushCommandBuffer(device, queue, transfer_commands);
 
+    vkFreeCommandBuffers(device, command_pool, 1, &transfer_commands);
     vkDestroyBuffer(device, vertex_staging.buf, nullptr);
     vkDestroyBuffer(device, index_staging.buf, nullptr);
     vkFreeMemory(device, vertex_staging.mem, nullptr);
     vkFreeMemory(device, index_staging.mem, nullptr);
-
     vkDestroyCommandPool(device, command_pool, nullptr);
 }
 
