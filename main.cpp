@@ -470,30 +470,10 @@ VkRenderPass renderPass;
 VkPipeline pipeline;
 VkDescriptorSetLayout descriptor_set_layout;
 
-Buffer vertex_buffer;
-Buffer index_buffer;
-
 template <typename T>
 size_t ByteCount(const std::vector<T>& v) { return sizeof(T) * v.size(); }
 
-// geometry data
-
-static manipulator manip;
-int buttonPressed = -1;
-bool motionReported = true;
-double oldMouseX;
-double oldMouseY;
-float fov = 45;
-
-float zoom = 1.0;
-vec4 object_rotation{0, 0, 0, 1};
-vec3 object_translation;
-vec3 object_scale;
-std::vector<Vertex> vertices;
-std::vector<uint32_t> indices;
-int triangleCount;
-
-void CreateGeometryBuffers()
+void CreateGeometryBuffers(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices, Buffer& vertex_buffer, Buffer& index_buffer)
 {
     // host-writable memory and buffers
     Buffer vertex_staging;
@@ -618,6 +598,44 @@ void CreateGeometryBuffers()
     vkFreeMemory(device, vertex_staging.mem, nullptr);
     vkFreeMemory(device, index_staging.mem, nullptr);
 }
+
+// interction data
+
+static manipulator manip;
+int buttonPressed = -1;
+bool motionReported = true;
+double oldMouseX;
+double oldMouseY;
+float fov = 45;
+
+// geometry data
+
+struct Drawable
+{
+    aabox bounds;
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+    int triangleCount;
+    Buffer vertex_buffer;
+    Buffer index_buffer;
+
+    Drawable(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) :
+        vertices(vertices), indices(indices)
+    {
+        triangleCount = static_cast<int>(indices.size() / 3);
+        for(uint32_t i = 0; i < vertices.size(); i++) {
+            bounds += vertices[i].v;
+        }
+    }
+};
+
+float zoom = 1.0;
+vec4 object_rotation{0, 0, 0, 1};
+vec3 object_translation;
+vec3 object_scale;
+
+typedef std::unique_ptr<Drawable> DrawablePtr;
+DrawablePtr drawable;
 
 void InitializeInstance()
 {
@@ -901,7 +919,7 @@ void InitializeState(int windowWidth, int windowHeight)
         VK_CHECK(vkCreateFramebuffer(device, &framebufferCreate, nullptr, &framebuffers[i]));
     }
 
-    CreateGeometryBuffers();
+    CreateGeometryBuffers(drawable->vertices, drawable->indices, drawable->vertex_buffer, drawable->index_buffer);
 
     // Create a graphics pipeline
     VkVertexInputBindingDescription vertex_input_binding {
@@ -1288,8 +1306,8 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
 
     // 7. Bind the vertex and swapchainIndex buffers
     VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(cb, 0, 1, &vertex_buffer.buf, &offset);
-    vkCmdBindIndexBuffer(cb, index_buffer.buf, 0, VK_INDEX_TYPE_UINT32);
+    vkCmdBindVertexBuffers(cb, 0, 1, &drawable->vertex_buffer.buf, &offset);
+    vkCmdBindIndexBuffer(cb, drawable->index_buffer.buf, 0, VK_INDEX_TYPE_UINT32);
 
     // 9. Set viewport and scissor parameters
     VkViewport viewport = CalculateViewport(static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowWidth));
@@ -1300,7 +1318,7 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
         .extent{static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight)}};
     vkCmdSetScissor(cb, 0, 1, &scissor);
 
-    vkCmdDrawIndexed(cb, triangleCount * 3, 1, 0, 0, 0);
+    vkCmdDrawIndexed(cb, drawable->triangleCount * 3, 1, 0, 0, 0);
     vkCmdEndRenderPass(cb);
     VK_CHECK(vkEndCommandBuffer(cb));
 
@@ -1491,18 +1509,16 @@ void LoadModel(const char *filename)
         throw "couldn't open file";
     }
 
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
     ParseTriSrc(fp, vertices, indices);
-    triangleCount = static_cast<int>(indices.size() / 3);
+    drawable = std::make_unique<Drawable>(vertices, indices);
 
-    aabox bounds;
-    for(uint32_t i = 0; i < vertices.size(); i++) {
-        bounds += vertices[i].v;
-    }
-    object_translation = bounds.center() * -1;
-    float dim = length(bounds.dim());
+    object_translation = drawable->bounds.center() * -1;
+    float dim = length(drawable->bounds.dim());
     object_scale = vec3(.5f / dim, .5f / dim, .5f / dim);
 
-    manip = manipulator(bounds, fov / 180.0f * 3.14159f / 2);
+    manip = manipulator(drawable->bounds, fov / 180.0f * 3.14159f / 2);
 
     fclose(fp);
 }
