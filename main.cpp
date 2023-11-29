@@ -81,7 +81,19 @@ static VkSurfaceFormatKHR PickSurfaceFormat(const VkSurfaceFormatKHR *surfaceFor
     return surfaceFormats[0];
 }
 
-// Sascha Willem's 
+VkCommandPool GetCommandPool(VkDevice device, uint32_t queue)
+{
+    VkCommandPool command_pool;
+    VkCommandPoolCreateInfo create_command_pool{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = queue,
+    };
+    VK_CHECK(vkCreateCommandPool(device, &create_command_pool, nullptr, &command_pool));
+    return command_pool;
+}
+
 VkCommandBuffer GetCommandBuffer(VkDevice device, VkCommandPool command_pool)
 {
     VkCommandBuffer cmdBuffer;
@@ -575,14 +587,7 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
     VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &index_buffer->mem));
     VK_CHECK(vkBindBufferMemory(device, index_buffer->buf, index_buffer->mem, 0));
 
-    VkCommandPool command_pool;
-    VkCommandPoolCreateInfo create_command_pool{
-        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        .pNext = nullptr,
-        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-        .queueFamilyIndex = transfer_queue,
-    };
-    VK_CHECK(vkCreateCommandPool(device, &create_command_pool, nullptr, &command_pool));
+    VkCommandPool command_pool = GetCommandPool(device, transfer_queue);
 
     // Copy from staging to the GPU-local buffers
     VkCommandBuffer transfer_commands = GetCommandBuffer(device, command_pool);
