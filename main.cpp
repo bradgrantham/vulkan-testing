@@ -180,9 +180,9 @@ struct Vertex
 
 struct Buffer
 {
-    VkDeviceMemory mem;
-    VkBuffer buf;
-    void* mapped;
+    VkDeviceMemory mem { VK_NULL_HANDLE };
+    VkBuffer buf { VK_NULL_HANDLE };
+    void* mapped { nullptr };
 };
 
 struct VertexUniforms
@@ -400,14 +400,14 @@ VkViewport CalculateViewport(uint32_t windowWidth, uint32_t windowHeight)
     return viewport;
 }
 
-void CreateDevice(VkPhysicalDevice physical_device, const std::vector<const char*>& extensions, uint32_t preferred_queue_family, VkDevice* device, VkQueue* queue)
+void CreateDevice(VkPhysicalDevice physical_device, const std::vector<const char*>& extensions, uint32_t graphics_queue, VkDevice* device, VkQueue* queue)
 {
     VkDeviceQueueCreateInfo create_queues[1] = {};
     float queue_priorities[1] = {1.0f};
     create_queues[0].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
     create_queues[0].pNext = nullptr;
     create_queues[0].flags = 0;
-    create_queues[0].queueFamilyIndex = preferred_queue_family;
+    create_queues[0].queueFamilyIndex = graphics_queue;
     create_queues[0].queueCount = 1;
     create_queues[0].pQueuePriorities = queue_priorities;
 
@@ -422,7 +422,7 @@ void CreateDevice(VkPhysicalDevice physical_device, const std::vector<const char
     create.ppEnabledExtensionNames = extensions.data();
     VK_CHECK(vkCreateDevice(physical_device, &create, nullptr, device));
 
-    vkGetDeviceQueue(*device, preferred_queue_family, 0, queue);
+    vkGetDeviceQueue(*device, graphics_queue, 0, queue);
 }
 
 void PrintImplementationInformation()
@@ -437,44 +437,35 @@ void PrintImplementationInformation()
     }
 }
 
-namespace VulkanApp
-{
-
-bool beVerbose = true;
-bool enableValidation = false;
-bool do_the_wrong_thing = false;
-
-VkInstance instance;
-VkPhysicalDevice physical_device;
-VkDevice device;
-VkPhysicalDeviceMemoryProperties memory_properties;
-uint32_t preferred_queue_family = NO_QUEUE_FAMILY;
-VkQueue queue;
-VkCommandPool command_pool;
-VkSurfaceKHR surface;
-VkSwapchainKHR swapchain;
-uint32_t swapchainIndex;
-std::vector<VkCommandBuffer> commandBuffers;
-uint32_t swapchainImageCount = 3;
-std::vector<VkImage> swapchainImages;
-std::vector<VkSemaphore> image_acquired_semaphores;
-std::vector<VkSemaphore> draw_completed_semaphores;
-std::vector<VkFence> draw_completed_fences;
-std::vector<VkDescriptorSet> descriptor_sets;
-std::vector<VkFramebuffer> framebuffers;
-std::vector<Buffer> uniform_buffers;
-int draw_submission_index = 0;
-VkPipelineLayout pipeline_layout;
-VkDescriptorPool descriptor_pool;
-VkRenderPass renderPass;
-VkPipeline pipeline;
-VkDescriptorSetLayout descriptor_set_layout;
-
 template <typename T>
 size_t ByteCount(const std::vector<T>& v) { return sizeof(T) * v.size(); }
 
-void CreateGeometryBuffers(const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices, Buffer& vertex_buffer, Buffer& index_buffer)
+uint32_t FindQueueFamily(VkPhysicalDevice physical_device, VkQueueFlags queue_flags)
 {
+    uint32_t queue_family_count;
+    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, nullptr);
+    std::vector<VkQueueFamilyProperties> queue_families(queue_family_count);
+    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.data());
+    for(uint32_t i = 0; i < queue_family_count; i++) {
+        if((queue_families[i].queueFlags & queue_flags) == queue_flags) {
+            return i;
+        }
+    }
+    return NO_QUEUE_FAMILY;
+}
+
+
+void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue, const std::vector<Vertex>& vertices, const std::vector<uint32_t>& indices, Buffer* vertex_buffer, Buffer* index_buffer)
+{
+    uint32_t transfer_queue = FindQueueFamily(physical_device, VK_QUEUE_TRANSFER_BIT);
+    if(transfer_queue == NO_QUEUE_FAMILY) {
+        fprintf(stderr, "couldn't find a transfer queue\n");
+        abort();
+    }
+
+    VkPhysicalDeviceMemoryProperties memory_properties;
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+
     // host-writable memory and buffers
     Buffer vertex_staging;
     Buffer index_staging;
@@ -482,7 +473,6 @@ void CreateGeometryBuffers(const std::vector<Vertex>& vertices, const std::vecto
 
     // Tells us how much memory and which memory types (by bit) can hold this memory
     VkMemoryRequirements memory_req{};
-
 
     // Create a buffer - buffers are used for things like vertex data
     // This one will be used as the source of a transfer to a GPU-addressable
@@ -553,16 +543,16 @@ void CreateGeometryBuffers(const std::vector<Vertex>& vertices, const std::vecto
 
     // Create a buffer representing vertices on the GPU
     create_vertex_buffer.size = ByteCount(vertices);
-    VK_CHECK(vkCreateBuffer(device, &create_vertex_buffer, nullptr, &vertex_buffer.buf));
+    VK_CHECK(vkCreateBuffer(device, &create_vertex_buffer, nullptr, &vertex_buffer->buf));
 
     // Get the size and type requirements for memory containing this buffer
-    vkGetBufferMemoryRequirements(device, vertex_buffer.buf, &memory_req);
+    vkGetBufferMemoryRequirements(device, vertex_buffer->buf, &memory_req);
 
     // Create a new GPU accessible memory for vertices
     memory_alloc.allocationSize = memory_req.size;
     memory_alloc.memoryTypeIndex = getMemoryTypeIndex(memory_properties, memory_req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &vertex_buffer.mem));
-    VK_CHECK(vkBindBufferMemory(device, vertex_buffer.buf, vertex_buffer.mem, 0));
+    VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &vertex_buffer->mem));
+    VK_CHECK(vkBindBufferMemory(device, vertex_buffer->buf, vertex_buffer->mem, 0));
 
     // This buffer will be used as the source of a transfer to a
     // GPU-addressable buffer
@@ -573,31 +563,76 @@ void CreateGeometryBuffers(const std::vector<Vertex>& vertices, const std::vecto
 
     // Create a buffer representing indices on the GPU
     create_index_buffer.size = ByteCount(indices);
-    VK_CHECK(vkCreateBuffer(device, &create_index_buffer, nullptr, &index_buffer.buf));
+    VK_CHECK(vkCreateBuffer(device, &create_index_buffer, nullptr, &index_buffer->buf));
 
     // Get the size and type requirements for memory containing this buffer
-    vkGetBufferMemoryRequirements(device, index_buffer.buf, &memory_req);
+    vkGetBufferMemoryRequirements(device, index_buffer->buf, &memory_req);
 
     // Create a new GPU accessible memory for indices
     memory_alloc.allocationSize = memory_req.size;
     memory_alloc.memoryTypeIndex = getMemoryTypeIndex(memory_properties, memory_req.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &index_buffer.mem));
-    VK_CHECK(vkBindBufferMemory(device, index_buffer.buf, index_buffer.mem, 0));
+    VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &index_buffer->mem));
+    VK_CHECK(vkBindBufferMemory(device, index_buffer->buf, index_buffer->mem, 0));
+
+    VkCommandPool command_pool;
+    VkCommandPoolCreateInfo create_command_pool{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = transfer_queue,
+    };
+    VK_CHECK(vkCreateCommandPool(device, &create_command_pool, nullptr, &command_pool));
 
     // Copy from staging to the GPU-local buffers
     VkCommandBuffer commands = getCommandBuffer(device, command_pool, true);
     VkBufferCopy copy = {};
     copy.size = ByteCount(vertices);
-    vkCmdCopyBuffer(commands, vertex_staging.buf, vertex_buffer.buf, 1, &copy);
+    vkCmdCopyBuffer(commands, vertex_staging.buf, vertex_buffer->buf, 1, &copy);
     copy.size = ByteCount(indices);
-    vkCmdCopyBuffer(commands, index_staging.buf, index_buffer.buf, 1, &copy);
+    vkCmdCopyBuffer(commands, index_staging.buf, index_buffer->buf, 1, &copy);
     flushCommandBuffer(device, queue, command_pool, commands);
 
     vkDestroyBuffer(device, vertex_staging.buf, nullptr);
     vkDestroyBuffer(device, index_staging.buf, nullptr);
     vkFreeMemory(device, vertex_staging.mem, nullptr);
     vkFreeMemory(device, index_staging.mem, nullptr);
+
+    vkDestroyCommandPool(device, command_pool, nullptr);
 }
+
+
+namespace VulkanApp
+{
+
+bool beVerbose = true;
+bool enableValidation = false;
+bool do_the_wrong_thing = false;
+
+VkInstance instance;
+VkPhysicalDevice physical_device;
+VkDevice device;
+VkPhysicalDeviceMemoryProperties memory_properties;
+uint32_t graphics_queue = NO_QUEUE_FAMILY;
+VkQueue queue;
+VkCommandPool command_pool;
+VkSurfaceKHR surface;
+VkSwapchainKHR swapchain;
+uint32_t swapchainIndex;
+std::vector<VkCommandBuffer> commandBuffers;
+uint32_t swapchainImageCount = 3;
+std::vector<VkImage> swapchainImages;
+std::vector<VkSemaphore> image_acquired_semaphores;
+std::vector<VkSemaphore> draw_completed_semaphores;
+std::vector<VkFence> draw_completed_fences;
+std::vector<VkDescriptorSet> descriptor_sets;
+std::vector<VkFramebuffer> framebuffers;
+std::vector<Buffer> uniform_buffers;
+int draw_submission_index = 0;
+VkPipelineLayout pipeline_layout;
+VkDescriptorPool descriptor_pool;
+VkRenderPass renderPass;
+VkPipeline pipeline;
+VkDescriptorSetLayout descriptor_set_layout;
 
 // interction data
 
@@ -616,16 +651,56 @@ struct Drawable
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     int triangleCount;
-    Buffer vertex_buffer;
-    Buffer index_buffer;
+    std::map<VkDevice, Buffer> vertex_buffers;
+    std::map<VkDevice, Buffer> index_buffers;
 
     Drawable(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) :
-        vertices(std::move(vertices)), indices(std::move(indices))
+        vertices(vertices), indices(indices)
     {
         triangleCount = static_cast<int>(indices.size() / 3);
         for(uint32_t i = 0; i < vertices.size(); i++) {
             bounds += vertices[i].v;
         }
+    }
+
+    void CreateDeviceData(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue)
+    {
+        Buffer vertex_buffer;
+        Buffer index_buffer;
+        CreateGeometryBuffers(physical_device, device, queue, vertices, indices, &vertex_buffer, &index_buffer);
+        vertex_buffers.insert({device, vertex_buffer});
+        index_buffers.insert({device, index_buffer});
+    }
+
+    void BindDeviceData(VkDevice device, VkCommandBuffer cmdbuf)
+    {
+        VkDeviceSize offset = 0;
+        VkBuffer buf = vertex_buffers.at(device).buf;
+        vkCmdBindVertexBuffers(cmdbuf, 0, 1, &buf, &offset);
+        vkCmdBindIndexBuffer(cmdbuf, index_buffers.at(device).buf, 0, VK_INDEX_TYPE_UINT32);
+    }
+
+    void ReleaseDeviceData(VkDevice device)
+    {
+        {
+            auto vb = vertex_buffers.at(device);
+            if(vb.mapped) {
+                vkUnmapMemory(device, vb.mem);
+            }
+            vkDestroyBuffer(device, vb.buf, nullptr);
+            vkFreeMemory(device, vb.mem, nullptr);
+        }
+
+        {
+            auto ib = index_buffers.at(device);
+            if(ib.mapped) {
+                vkUnmapMemory(device, ib.mem);
+            }
+            vkDestroyBuffer(device, ib.buf, nullptr);
+            vkFreeMemory(device, ib.mem, nullptr);
+        }
+
+        vertex_buffers.erase(device);
     }
 };
 
@@ -650,20 +725,10 @@ void InitializeState(int windowWidth, int windowHeight)
     ChoosePhysicalDevice(instance, &physical_device, beVerbose);
     vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
 
-    uint32_t queue_family_count;
-    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, nullptr);
-    std::vector<VkQueueFamilyProperties> queue_families(queue_family_count);
-    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.data());
-    for(uint32_t i = 0; i < queue_family_count; i++) {
-        if(queue_families[i].queueFlags & VK_QUEUE_GRAPHICS_BIT) {
-            preferred_queue_family = i;
-            break;
-        }
-    }
-
-    if(preferred_queue_family == NO_QUEUE_FAMILY) {
-	std::cerr << "no desired queue family was found\n";
-	exit(EXIT_FAILURE);
+    graphics_queue = FindQueueFamily(physical_device, VK_QUEUE_GRAPHICS_BIT);
+    if(graphics_queue == NO_QUEUE_FAMILY) {
+        fprintf(stderr, "couldn't find a graphics queue\n");
+        abort();
     }
 
     if(beVerbose) {
@@ -692,7 +757,7 @@ void InitializeState(int windowWidth, int windowHeight)
         }
     }
 
-    CreateDevice(physical_device, deviceExtensions, preferred_queue_family, &device, &queue);
+    CreateDevice(physical_device, deviceExtensions, graphics_queue, &device, &queue);
 
     uint32_t formatCount;
     VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, nullptr));
@@ -758,7 +823,7 @@ void InitializeState(int windowWidth, int windowHeight)
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
         .pNext = nullptr,
         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-        .queueFamilyIndex = preferred_queue_family,
+        .queueFamilyIndex = graphics_queue,
     };
     VK_CHECK(vkCreateCommandPool(device, &create_command_pool, nullptr, &command_pool));
 
@@ -919,7 +984,7 @@ void InitializeState(int windowWidth, int windowHeight)
         VK_CHECK(vkCreateFramebuffer(device, &framebufferCreate, nullptr, &framebuffers[i]));
     }
 
-    CreateGeometryBuffers(drawable->vertices, drawable->indices, drawable->vertex_buffer, drawable->index_buffer);
+    drawable->CreateDeviceData(physical_device, device, queue);
 
     // Create a graphics pipeline
     VkVertexInputBindingDescription vertex_input_binding {
@@ -1198,6 +1263,7 @@ void InitializeState(int windowWidth, int windowHeight)
 
 void Cleanup()
 {
+    drawable->ReleaseDeviceData(device);
 }
 
 void rotation(float a, float x, float y, float z, float m[16])
@@ -1305,9 +1371,7 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
     // 8. Bind the texture resources - NA
 
     // 7. Bind the vertex and swapchainIndex buffers
-    VkDeviceSize offset = 0;
-    vkCmdBindVertexBuffers(cb, 0, 1, &drawable->vertex_buffer.buf, &offset);
-    vkCmdBindIndexBuffer(cb, drawable->index_buffer.buf, 0, VK_INDEX_TYPE_UINT32);
+    drawable->BindDeviceData(device, cb);
 
     // 9. Set viewport and scissor parameters
     VkViewport viewport = CalculateViewport(static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowWidth));
