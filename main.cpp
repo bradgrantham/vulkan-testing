@@ -620,7 +620,7 @@ struct Drawable
     Buffer index_buffer;
 
     Drawable(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) :
-        vertices(vertices), indices(indices)
+        vertices(std::move(vertices)), indices(std::move(indices))
     {
         triangleCount = static_cast<int>(indices.size() / 3);
         for(uint32_t i = 0; i < vertices.size(); i++) {
