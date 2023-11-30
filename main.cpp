@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <set>
 #include <string>
+#include <array>
 
 #include <cstring>
 #include <cassert>
@@ -663,8 +664,10 @@ struct Drawable
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     int triangleCount;
-    std::map<VkDevice, Buffer> vertex_buffers;
-    std::map<VkDevice, Buffer> index_buffers;
+    constexpr static int VERTEX_BUFFER = 0;
+    constexpr static int INDEX_BUFFER = 1;
+    typedef std::array<Buffer, 2> DrawableBuffersOnDevice;
+    std::map<VkDevice, DrawableBuffersOnDevice> buffers_by_device;
 
     Drawable(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) :
         vertices(vertices), indices(indices)
@@ -680,39 +683,29 @@ struct Drawable
         Buffer vertex_buffer;
         Buffer index_buffer;
         CreateGeometryBuffers(physical_device, device, queue, vertices, indices, &vertex_buffer, &index_buffer);
-        vertex_buffers.insert({device, vertex_buffer});
-        index_buffers.insert({device, index_buffer});
+        buffers_by_device.insert({device, {vertex_buffer, index_buffer}});
     }
 
-    void BindDeviceData(VkDevice device, VkCommandBuffer cmdbuf)
+    void BindForDraw(VkDevice device, VkCommandBuffer cmdbuf)
     {
         VkDeviceSize offset = 0;
-        VkBuffer buf = vertex_buffers.at(device).buf;
-        vkCmdBindVertexBuffers(cmdbuf, 0, 1, &buf, &offset);
-        vkCmdBindIndexBuffer(cmdbuf, index_buffers.at(device).buf, 0, VK_INDEX_TYPE_UINT32);
+        auto buffers = buffers_by_device.at(device);
+        auto vbuf = buffers[VERTEX_BUFFER].buf;
+        vkCmdBindVertexBuffers(cmdbuf, 0, 1, &vbuf, &offset);
+        vkCmdBindIndexBuffer(cmdbuf, buffers[INDEX_BUFFER].buf, 0, VK_INDEX_TYPE_UINT32);
     }
 
     void ReleaseDeviceData(VkDevice device)
     {
-        {
-            auto vb = vertex_buffers.at(device);
-            if(vb.mapped) {
-                vkUnmapMemory(device, vb.mem);
+        for(auto& buffer : buffers_by_device.at(device)) {
+            if(buffer.mapped) {
+                vkUnmapMemory(device, buffer.mem);
             }
-            vkDestroyBuffer(device, vb.buf, nullptr);
-            vkFreeMemory(device, vb.mem, nullptr);
+            vkDestroyBuffer(device, buffer.buf, nullptr);
+            vkFreeMemory(device, buffer.mem, nullptr);
         }
 
-        {
-            auto ib = index_buffers.at(device);
-            if(ib.mapped) {
-                vkUnmapMemory(device, ib.mem);
-            }
-            vkDestroyBuffer(device, ib.buf, nullptr);
-            vkFreeMemory(device, ib.mem, nullptr);
-        }
-
-        vertex_buffers.erase(device);
+        buffers_by_device.erase(device);
     }
 };
 
@@ -1278,46 +1271,7 @@ void Cleanup()
     drawable->ReleaseDeviceData(device);
 }
 
-void rotation(float a, float x, float y, float z, float m[16])
-{
-    float c, s, t;
-
-    c = (float)cos(a);
-    s = (float)sin(a);
-    t = 1.0f - c;
-
-    m[0] = t * x * x + c;
-    m[1] = t * x * y + s * z;
-    m[2] = t * x * z - s * y;
-    m[3] = 0;
-
-    m[4] = t * x * y - s * z;
-    m[5] = t * y * y + c;
-    m[6] = t * y * z + s * x;
-    m[7] = 0;
-
-    m[8] = t * x * z + s * y;
-    m[9] = t * y * z - s * x;
-    m[10] = t * z * z + c;
-    m[11] = 0;
-
-    m[12] = 0; m[13] = 0; m[14] = 0; m[15] = 1;
-}
-
-mat4f create_camera_matrix(const vec3& eye)
-{
-    return mat4f::translation(-eye[0], -eye[1], -eye[2]);
-}
-
-mat4f create_object_matrix(const vec4& rotation, const vec3& scale, const vec3& translation)
-{
-    mat4f scale_matrix = mat4f::scale(scale[0], scale[1], scale[2]);
-    mat4f rotation_matrix = mat4f::rotation(-rotation[0], rotation[1], rotation[2], rotation[3]);
-    mat4f translation_matrix = mat4f::translation(translation[0], translation[1], translation[2]);
-    return translation_matrix * scale_matrix * rotation_matrix;
-}
-
-static void DrawFrame([[maybe_unused]] GLFWwindow *window)
+static void DrawFrame(GLFWwindow *window)
 {
     int windowWidth, windowHeight;
     glfwGetWindowSize(window, &windowWidth, &windowHeight);
@@ -1383,7 +1337,7 @@ static void DrawFrame([[maybe_unused]] GLFWwindow *window)
     // 8. Bind the texture resources - NA
 
     // 7. Bind the vertex and swapchainIndex buffers
-    drawable->BindDeviceData(device, cb);
+    drawable->BindForDraw(device, cb);
 
     // 9. Set viewport and scissor parameters
     VkViewport viewport = CalculateViewport(static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowWidth));
