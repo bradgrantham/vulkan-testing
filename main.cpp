@@ -482,7 +482,6 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
     // host-writable memory and buffers
     Buffer vertex_staging;
     Buffer index_staging;
-    void *mapped; // when mapped, this points to the buffer
 
     // Tells us how much memory and which memory types (by bit) can hold this memory
     VkMemoryRequirements memory_req{};
@@ -490,10 +489,11 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
     // Create a buffer - buffers are used for things like vertex data
     // This one will be used as the source of a transfer to a GPU-addressable
     // buffer
-    VkBufferCreateInfo create_staging_buffer{};
-    create_staging_buffer.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    create_staging_buffer.pNext = nullptr;
-    create_staging_buffer.usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT;
+    VkBufferCreateInfo create_staging_buffer{
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .pNext = nullptr,
+        .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+    };
 
     // Create a buffer for vertices, allocate memory, map it, copy vertices to the memory, unmap, and then bind the vertex buffer to that memory.
     create_staging_buffer.size = ByteCount(vertices);
@@ -517,13 +517,12 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
     VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &vertex_staging.mem));
 
     // Map the memory, fill it, and unmap it
-    VK_CHECK(vkMapMemory(device, vertex_staging.mem, 0, memory_alloc.allocationSize, 0, &mapped));
-    memcpy(mapped, vertices.data(), ByteCount(vertices));
+    VK_CHECK(vkMapMemory(device, vertex_staging.mem, 0, memory_alloc.allocationSize, 0, &vertex_staging.mapped));
+    memcpy(vertex_staging.mapped, vertices.data(), ByteCount(vertices));
     vkUnmapMemory(device, vertex_staging.mem);
 
     // Tell Vulkan our buffer is in this memory at offset 0
     VK_CHECK(vkBindBufferMemory(device, vertex_staging.buf, vertex_staging.mem, 0));
-
 
     // Create a buffer for indices, allocate memory, map it, copy indices to the memory, unmap, and then bind the index buffer to that memory.
     create_staging_buffer.size = ByteCount(indices);
@@ -540,8 +539,8 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
     VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &index_staging.mem));
 
     // Map the memory, fill it, and unmap it
-    VK_CHECK(vkMapMemory(device, index_staging.mem, 0, memory_alloc.allocationSize, 0, &mapped));
-    memcpy(mapped, indices.data(), ByteCount(indices));
+    VK_CHECK(vkMapMemory(device, index_staging.mem, 0, memory_alloc.allocationSize, 0, &index_staging.mapped));
+    memcpy(index_staging.mapped, indices.data(), ByteCount(indices));
     vkUnmapMemory(device, index_staging.mem);
 
     // Tell Vulkan our buffer is in this memory at offset 0
@@ -549,10 +548,11 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
 
     // This buffer will be used as the source of a transfer to a
     // GPU-addressable buffer
-    VkBufferCreateInfo create_vertex_buffer = {};
-    create_vertex_buffer.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    create_vertex_buffer.pNext = nullptr;
-    create_vertex_buffer.usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    VkBufferCreateInfo create_vertex_buffer = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .pNext = nullptr,
+        .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    };
 
     // Create a buffer representing vertices on the GPU
     create_vertex_buffer.size = ByteCount(vertices);
@@ -569,10 +569,11 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
 
     // This buffer will be used as the source of a transfer to a
     // GPU-addressable buffer
-    VkBufferCreateInfo create_index_buffer = {};
-    create_index_buffer.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO;
-    create_index_buffer.pNext = nullptr;
-    create_index_buffer.usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+    VkBufferCreateInfo create_index_buffer = {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+        .pNext = nullptr,
+        .usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+    };
 
     // Create a buffer representing indices on the GPU
     create_index_buffer.size = ByteCount(indices);
@@ -588,16 +589,20 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
     VK_CHECK(vkBindBufferMemory(device, index_buffer->buf, index_buffer->mem, 0));
 
     VkCommandPool command_pool = GetCommandPool(device, transfer_queue);
+    VkCommandBuffer transfer_commands = GetCommandBuffer(device, command_pool);
 
     // Copy from staging to the GPU-local buffers
-    VkCommandBuffer transfer_commands = GetCommandBuffer(device, command_pool);
     BeginCommandBuffer(transfer_commands);
-    VkBufferCopy copy = {};
-    copy.size = ByteCount(vertices);
-    vkCmdCopyBuffer(transfer_commands, vertex_staging.buf, vertex_buffer->buf, 1, &copy);
-    copy.size = ByteCount(indices);
-    vkCmdCopyBuffer(transfer_commands, index_staging.buf, index_buffer->buf, 1, &copy);
+    {
+        VkBufferCopy copy {0, 0, ByteCount(vertices)};
+        vkCmdCopyBuffer(transfer_commands, vertex_staging.buf, vertex_buffer->buf, 1, &copy);
+    }
+    {
+        VkBufferCopy copy {0, 0, ByteCount(indices)};
+        vkCmdCopyBuffer(transfer_commands, index_staging.buf, index_buffer->buf, 1, &copy);
+    }
     VK_CHECK(vkEndCommandBuffer(transfer_commands));
+
     FlushCommandBuffer(device, queue, transfer_commands);
 
     vkFreeCommandBuffers(device, command_pool, 1, &transfer_commands);
@@ -607,7 +612,6 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
     vkFreeMemory(device, index_staging.mem, nullptr);
     vkDestroyCommandPool(device, command_pool, nullptr);
 }
-
 
 namespace VulkanApp
 {
@@ -642,7 +646,7 @@ VkRenderPass renderPass;
 VkPipeline pipeline;
 VkDescriptorSetLayout descriptor_set_layout;
 
-// interction data
+// interaction data
 
 static manipulator manip;
 int buttonPressed = -1;
