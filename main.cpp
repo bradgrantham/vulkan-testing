@@ -254,10 +254,10 @@ void CreateInstance(VkInstance* instance, bool enableValidation)
             .flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
 #endif
             .pApplicationInfo = &app_info,
-            .enabledExtensionCount = static_cast<uint32_t>(extensions.size()),
-            .ppEnabledExtensionNames = extensions.data(),
             .enabledLayerCount = static_cast<uint32_t>(layers.size()),
             .ppEnabledLayerNames = layers.data(),
+            .enabledExtensionCount = static_cast<uint32_t>(extensions.size()),
+            .ppEnabledExtensionNames = extensions.data(),
         };
 
 	VK_CHECK(vkCreateInstance(&create, nullptr, instance));
@@ -616,6 +616,57 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
     vkDestroyCommandPool(device, command_pool, nullptr);
 }
 
+struct Drawable
+{
+    aabox bounds;
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+    int triangleCount;
+    constexpr static int VERTEX_BUFFER = 0;
+    constexpr static int INDEX_BUFFER = 1;
+    typedef std::array<Buffer, 2> DrawableBuffersOnDevice;
+    std::map<VkDevice, DrawableBuffersOnDevice> buffers_by_device;
+
+    Drawable(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) :
+        vertices(vertices), indices(indices)
+    {
+        triangleCount = static_cast<int>(indices.size() / 3);
+        for(uint32_t i = 0; i < vertices.size(); i++) {
+            bounds += vertices[i].v;
+        }
+    }
+
+    void CreateDeviceData(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue)
+    {
+        Buffer vertex_buffer;
+        Buffer index_buffer;
+        CreateGeometryBuffers(physical_device, device, queue, vertices, indices, &vertex_buffer, &index_buffer);
+        buffers_by_device.insert({device, {vertex_buffer, index_buffer}});
+    }
+
+    void BindForDraw(VkDevice device, VkCommandBuffer cmdbuf)
+    {
+        VkDeviceSize offset = 0;
+        auto buffers = buffers_by_device.at(device);
+        auto vbuf = buffers[VERTEX_BUFFER].buf;
+        vkCmdBindVertexBuffers(cmdbuf, 0, 1, &vbuf, &offset);
+        vkCmdBindIndexBuffer(cmdbuf, buffers[INDEX_BUFFER].buf, 0, VK_INDEX_TYPE_UINT32);
+    }
+
+    void ReleaseDeviceData(VkDevice device)
+    {
+        for(auto& buffer : buffers_by_device.at(device)) {
+            if(buffer.mapped) {
+                vkUnmapMemory(device, buffer.mem);
+            }
+            vkDestroyBuffer(device, buffer.buf, nullptr);
+            vkFreeMemory(device, buffer.mem, nullptr);
+        }
+
+        buffers_by_device.erase(device);
+    }
+};
+
 namespace VulkanApp
 {
 
@@ -669,57 +720,6 @@ double oldMouseY;
 float fov = 45;
 
 // geometry data
-
-struct Drawable
-{
-    aabox bounds;
-    std::vector<Vertex> vertices;
-    std::vector<uint32_t> indices;
-    int triangleCount;
-    constexpr static int VERTEX_BUFFER = 0;
-    constexpr static int INDEX_BUFFER = 1;
-    typedef std::array<Buffer, 2> DrawableBuffersOnDevice;
-    std::map<VkDevice, DrawableBuffersOnDevice> buffers_by_device;
-
-    Drawable(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) :
-        vertices(vertices), indices(indices)
-    {
-        triangleCount = static_cast<int>(indices.size() / 3);
-        for(uint32_t i = 0; i < vertices.size(); i++) {
-            bounds += vertices[i].v;
-        }
-    }
-
-    void CreateDeviceData(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue)
-    {
-        Buffer vertex_buffer;
-        Buffer index_buffer;
-        CreateGeometryBuffers(physical_device, device, queue, vertices, indices, &vertex_buffer, &index_buffer);
-        buffers_by_device.insert({device, {vertex_buffer, index_buffer}});
-    }
-
-    void BindForDraw(VkDevice device, VkCommandBuffer cmdbuf)
-    {
-        VkDeviceSize offset = 0;
-        auto buffers = buffers_by_device.at(device);
-        auto vbuf = buffers[VERTEX_BUFFER].buf;
-        vkCmdBindVertexBuffers(cmdbuf, 0, 1, &vbuf, &offset);
-        vkCmdBindIndexBuffer(cmdbuf, buffers[INDEX_BUFFER].buf, 0, VK_INDEX_TYPE_UINT32);
-    }
-
-    void ReleaseDeviceData(VkDevice device)
-    {
-        for(auto& buffer : buffers_by_device.at(device)) {
-            if(buffer.mapped) {
-                vkUnmapMemory(device, buffer.mem);
-            }
-            vkDestroyBuffer(device, buffer.buf, nullptr);
-            vkFreeMemory(device, buffer.mem, nullptr);
-        }
-
-        buffers_by_device.erase(device);
-    }
-};
 
 float zoom = 1.0;
 vec4 object_rotation{0, 0, 0, 1};
