@@ -1286,8 +1286,17 @@ void InitializeState(int windowWidth, int windowHeight)
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &create_pipeline, nullptr, &pipeline));
 }
 
+void WaitForAllDrawsCompleted()
+{
+    for(auto& fence: draw_completed_fences) {
+        VK_CHECK(vkWaitForFences(device, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
+        VK_CHECK(vkResetFences(device, 1, &fence));
+    }
+}
+
 void Cleanup()
 {
+    WaitForAllDrawsCompleted();
     drawable->ReleaseDeviceData(device);
 }
 
