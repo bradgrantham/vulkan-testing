@@ -621,18 +621,23 @@ bool beVerbose = true;
 bool enableValidation = false;
 bool do_the_wrong_thing = false;
 
+// non-frame stuff - instance, queue, device, ...?
 VkInstance instance;
 VkPhysicalDevice physical_device;
 VkDevice device;
-VkPhysicalDeviceMemoryProperties memory_properties;
 uint32_t graphics_queue = NO_QUEUE_FAMILY;
-VkQueue queue;
-VkCommandPool command_pool;
 VkSurfaceKHR surface;
 VkSwapchainKHR swapchain;
+
+// ??
+VkCommandPool command_pool;
+VkQueue queue;
+
+// frame stuff - swapchains indices, fences, semaphores
 uint32_t swapchainIndex;
-std::vector<VkCommandBuffer> commandBuffers;
 uint32_t swapchainImageCount = 3;
+int draw_submission_index = 0;
+std::vector<VkCommandBuffer> commandBuffers;
 std::vector<VkImage> swapchainImages;
 std::vector<VkSemaphore> image_acquired_semaphores;
 std::vector<VkSemaphore> draw_completed_semaphores;
@@ -640,7 +645,8 @@ std::vector<VkFence> draw_completed_fences;
 std::vector<VkDescriptorSet> descriptor_sets;
 std::vector<VkFramebuffer> framebuffers;
 std::vector<Buffer> uniform_buffers;
-int draw_submission_index = 0;
+
+// rendering stuff - pipelines, binding & drawing commands
 VkPipelineLayout pipeline_layout;
 VkDescriptorPool descriptor_pool;
 VkRenderPass renderPass;
@@ -728,7 +734,6 @@ void InitializeInstance()
 void InitializeState(int windowWidth, int windowHeight)
 {
     ChoosePhysicalDevice(instance, &physical_device, beVerbose);
-    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
 
     graphics_queue = FindQueueFamily(physical_device, VK_QUEUE_GRAPHICS_BIT);
     if(graphics_queue == NO_QUEUE_FAMILY) {
@@ -737,6 +742,8 @@ void InitializeState(int windowWidth, int windowHeight)
     }
 
     if(beVerbose) {
+        VkPhysicalDeviceMemoryProperties memory_properties;
+        vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
         PrintDeviceInformation(physical_device, memory_properties);
     }
 
@@ -841,6 +848,9 @@ void InitializeState(int windowWidth, int windowHeight)
     };
     commandBuffers.resize(swapchainImageCount);
     VK_CHECK(vkAllocateCommandBuffers(device, &allocate, commandBuffers.data()));
+
+    VkPhysicalDeviceMemoryProperties memory_properties;
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
 
     VkFormat depthFormat = VK_FORMAT_D32_SFLOAT_S8_UINT;
     VkImageCreateInfo createDepthInfo {
@@ -1536,7 +1546,8 @@ void LoadModel(const char *filename)
 
     FILE* fp = fopen(filename, "r");
     if(fp == nullptr) {
-        throw "couldn't open file";
+        fprintf(stderr, "couldn't open file");
+        exit(EXIT_FAILURE);
     }
 
     std::vector<Vertex> vertices;
