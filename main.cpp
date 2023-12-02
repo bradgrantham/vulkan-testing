@@ -167,7 +167,6 @@ uint32_t getMemoryTypeIndex(VkPhysicalDeviceMemoryProperties memory_properties, 
 // Styled somewhat after Sascha Willem's triangle
 
 static constexpr uint32_t NO_QUEUE_FAMILY = 0xffffffff;
-static constexpr int MAX_IN_FLIGHT = 2;
 
 struct Vertex
 {
@@ -241,25 +240,25 @@ void CreateInstance(VkInstance* instance, bool enableValidation)
 	    layers.push_back(s.c_str());
         }
 
-	VkApplicationInfo app_info {};
-	app_info.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
-	app_info.pApplicationName = "triangle";
-	app_info.pEngineName = "triangle";
-	app_info.apiVersion = VK_API_VERSION_1_2;
+	VkApplicationInfo app_info {
+            .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
+            .pApplicationName = "triangle",
+            .pEngineName = "triangle",
+            .apiVersion = VK_API_VERSION_1_2,
+        };
 
-	VkInstanceCreateInfo create{};
-	create.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
-	create.pNext = nullptr;
+	VkInstanceCreateInfo create {
+            .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
+            .pNext = nullptr,
 #if defined(PLATFORM_MACOS)
-        create.flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR;
-#else
-        create.flags = 0;
+            .flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
 #endif
-	create.pApplicationInfo = &app_info;
-	create.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
-	create.ppEnabledExtensionNames = extensions.data();
-	create.enabledLayerCount = static_cast<uint32_t>(layers.size());
-	create.ppEnabledLayerNames = layers.data();
+            .pApplicationInfo = &app_info,
+            .enabledExtensionCount = static_cast<uint32_t>(extensions.size()),
+            .ppEnabledExtensionNames = extensions.data(),
+            .enabledLayerCount = static_cast<uint32_t>(layers.size()),
+            .ppEnabledLayerNames = layers.data(),
+        };
 
 	VK_CHECK(vkCreateInstance(&create, nullptr, instance));
     }(extension_set, layer_set);
@@ -322,11 +321,11 @@ void PrintDeviceInformation(VkPhysicalDevice physical_device, VkPhysicalDeviceMe
     uint32_t ext_count;
 
     vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &ext_count, nullptr);
-    std::unique_ptr<VkExtensionProperties[]> exts(new VkExtensionProperties[ext_count]);
-    vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &ext_count, exts.get());
+    std::vector<VkExtensionProperties> exts(ext_count);
+    vkEnumerateDeviceExtensionProperties(physical_device, nullptr, &ext_count, exts.data());
     printf("    extensions:\n");
-    for(uint32_t i = 0; i < ext_count; i++) {
-	printf("        %s\n", exts[i].extensionName);
+    for(const auto& ext: exts) {
+	printf("        %s\n", ext.extensionName);
     }
 
     // VkPhysicalDeviceLimits              limits;
@@ -334,17 +333,18 @@ void PrintDeviceInformation(VkPhysicalDevice physical_device, VkPhysicalDeviceMe
     //
     uint32_t queue_family_count;
     vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, nullptr);
-    std::unique_ptr<VkQueueFamilyProperties[]> queue_families(new VkQueueFamilyProperties[queue_family_count]);
-    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.get());
-    for(uint32_t i = 0; i < queue_family_count; i++) {
-        printf("queue %d:\n", i);
-        printf("    flags:                       %04X\n", queue_families[i].queueFlags);
-        printf("    queueCount:                  %d\n", queue_families[i].queueCount);
-        printf("    timestampValidBits:          %d\n", queue_families[i].timestampValidBits);
+    std::vector<VkQueueFamilyProperties> queue_families(queue_family_count);
+    vkGetPhysicalDeviceQueueFamilyProperties(physical_device, &queue_family_count, queue_families.data());
+    int queue_index = 0;
+    for(const auto& queue_family: queue_families) {
+        printf("queue %d:\n", queue_index++);
+        printf("    flags:                       %04X\n", queue_family.queueFlags);
+        printf("    queueCount:                  %d\n", queue_family.queueCount);
+        printf("    timestampValidBits:          %d\n", queue_family.timestampValidBits);
         printf("    minImageTransferGranularity: (%d, %d, %d)\n",
-            queue_families[i].minImageTransferGranularity.width,
-            queue_families[i].minImageTransferGranularity.height,
-            queue_families[i].minImageTransferGranularity.depth);
+            queue_family.minImageTransferGranularity.width,
+            queue_family.minImageTransferGranularity.height,
+            queue_family.minImageTransferGranularity.depth);
     }
 
     for(uint32_t i = 0; i < memory_properties.memoryTypeCount; i++) {
@@ -414,40 +414,42 @@ VkViewport CalculateViewport(uint32_t windowWidth, uint32_t windowHeight)
     return viewport;
 }
 
-void CreateDevice(VkPhysicalDevice physical_device, const std::vector<const char*>& extensions, uint32_t graphics_queue, VkDevice* device, VkQueue* queue)
+void CreateDevice(VkPhysicalDevice physical_device, const std::vector<const char*>& extensions, uint32_t queue_family, VkDevice* device, VkQueue* queue)
 {
-    VkDeviceQueueCreateInfo create_queues[1] = {};
-    float queue_priorities[1] = {1.0f};
-    create_queues[0].sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
-    create_queues[0].pNext = nullptr;
-    create_queues[0].flags = 0;
-    create_queues[0].queueFamilyIndex = graphics_queue;
-    create_queues[0].queueCount = 1;
-    create_queues[0].pQueuePriorities = queue_priorities;
+    float queue_priorities = 1.0f;
 
-    VkDeviceCreateInfo create = {};
+    VkDeviceQueueCreateInfo create_queues {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .queueFamilyIndex = queue_family,
+        .queueCount = 1,
+        .pQueuePriorities = &queue_priorities,
+    };
 
-    create.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
-    create.pNext = nullptr;
-    create.flags = 0;
-    create.queueCreateInfoCount = 1;
-    create.pQueueCreateInfos = create_queues;
-    create.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
-    create.ppEnabledExtensionNames = extensions.data();
+    VkDeviceCreateInfo create = {
+        .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .queueCreateInfoCount = 1,
+        .pQueueCreateInfos = &create_queues,
+        .enabledExtensionCount = static_cast<uint32_t>(extensions.size()),
+        .ppEnabledExtensionNames = extensions.data(),
+    };
     VK_CHECK(vkCreateDevice(physical_device, &create, nullptr, device));
 
-    vkGetDeviceQueue(*device, graphics_queue, 0, queue);
+    vkGetDeviceQueue(*device, queue_family, 0, queue);
 }
 
 void PrintImplementationInformation()
 {
     uint32_t ext_count;
     vkEnumerateInstanceExtensionProperties(nullptr, &ext_count, nullptr);
-    std::unique_ptr<VkExtensionProperties[]> exts(new VkExtensionProperties[ext_count]);
-    vkEnumerateInstanceExtensionProperties(nullptr, &ext_count, exts.get());
+    std::vector<VkExtensionProperties> exts(ext_count);
+    vkEnumerateInstanceExtensionProperties(nullptr, &ext_count, exts.data());
     printf("Vulkan instance extensions:\n");
-    for (uint32_t i = 0; i < ext_count; i++) {
-        printf("\t%s, %08X\n", exts[i].extensionName, exts[i].specVersion);
+    for (const auto& ext: exts) {
+        printf("\t%s, %08X\n", ext.extensionName, ext.specVersion);
     }
 }
 
@@ -617,6 +619,8 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
 namespace VulkanApp
 {
 
+static constexpr int MAX_IN_FLIGHT = 2;
+
 bool beVerbose = true;
 bool enableValidation = false;
 bool do_the_wrong_thing = false;
@@ -625,7 +629,7 @@ bool do_the_wrong_thing = false;
 VkInstance instance;
 VkPhysicalDevice physical_device;
 VkDevice device;
-uint32_t graphics_queue = NO_QUEUE_FAMILY;
+uint32_t graphics_queue_family = NO_QUEUE_FAMILY;
 VkSurfaceKHR surface;
 VkSwapchainKHR swapchain;
 
@@ -636,14 +640,16 @@ VkQueue queue;
 // frame stuff - swapchains indices, fences, semaphores
 uint32_t swapchainIndex;
 uint32_t swapchainImageCount = 3;
-int draw_submission_index = 0;
-std::vector<VkCommandBuffer> commandBuffers;
 std::vector<VkImage> swapchainImages;
 std::vector<VkSemaphore> image_acquired_semaphores;
+std::vector<VkFramebuffer> framebuffers;
+
+// Aren't these just for parallelism and don't need swapchainCount for these?
+int draw_submission_index = 0;
+std::vector<VkCommandBuffer> commandBuffers;
 std::vector<VkSemaphore> draw_completed_semaphores;
 std::vector<VkFence> draw_completed_fences;
 std::vector<VkDescriptorSet> descriptor_sets;
-std::vector<VkFramebuffer> framebuffers;
 std::vector<Buffer> uniform_buffers;
 
 // rendering stuff - pipelines, binding & drawing commands
@@ -733,10 +739,11 @@ void InitializeInstance()
 
 void InitializeState(int windowWidth, int windowHeight)
 {
+    // non-frame stuff
     ChoosePhysicalDevice(instance, &physical_device, beVerbose);
 
-    graphics_queue = FindQueueFamily(physical_device, VK_QUEUE_GRAPHICS_BIT);
-    if(graphics_queue == NO_QUEUE_FAMILY) {
+    graphics_queue_family = FindQueueFamily(physical_device, VK_QUEUE_GRAPHICS_BIT);
+    if(graphics_queue_family == NO_QUEUE_FAMILY) {
         fprintf(stderr, "couldn't find a graphics queue\n");
         abort();
     }
@@ -769,13 +776,21 @@ void InitializeState(int windowWidth, int windowHeight)
         }
     }
 
-    CreateDevice(physical_device, deviceExtensions, graphics_queue, &device, &queue);
+    CreateDevice(physical_device, deviceExtensions, graphics_queue_family, &device, &queue);
+
+    VkCommandPoolCreateInfo create_command_pool{
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = graphics_queue_family,
+    };
+    VK_CHECK(vkCreateCommandPool(device, &create_command_pool, nullptr, &command_pool));
 
     uint32_t formatCount;
     VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, nullptr));
-    std::unique_ptr<VkSurfaceFormatKHR[]> surfaceFormats(new VkSurfaceFormatKHR[formatCount]);
-    VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, surfaceFormats.get()));
-    VkSurfaceFormatKHR surfaceFormat = PickSurfaceFormat(surfaceFormats.get(), formatCount);
+    std::vector<VkSurfaceFormatKHR> surfaceFormats(formatCount);
+    VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, surfaceFormats.data()));
+    VkSurfaceFormatKHR surfaceFormat = PickSurfaceFormat(surfaceFormats.data(), formatCount);
     VkFormat chosenFormat = surfaceFormat.format;
     VkColorSpaceKHR chosenColorSpace = surfaceFormat.colorSpace;
 
@@ -804,11 +819,38 @@ void InitializeState(int windowWidth, int windowHeight)
     };
     VK_CHECK(vkCreateSwapchainKHR(device, &create, nullptr, &swapchain));
 
+// frame stuff - swapchains indices, fences, semaphores
     uint32_t swapchainImageCountReturned;
     VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCountReturned, nullptr));
     assert(swapchainImageCountReturned == swapchainImageCount);
     swapchainImages.resize(swapchainImageCount);
     VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCount, swapchainImages.data()));
+
+    // XXX create a timeline semaphore by chaining after a
+    // VkSemaphoreTypeCreateInfo with VkSemaphoreTypeCreateInfo =
+    // VK_SEMAPHORE_TYPE_TIMELINE
+    VkSemaphoreCreateInfo sema_create = {
+        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+        .pNext = NULL,
+        .flags = 0,
+    };
+    image_acquired_semaphores.resize(swapchainImageCount);
+    for(uint32_t i = 0; i < swapchainImageCount; i++) {
+        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &image_acquired_semaphores[i]));
+    }
+    draw_completed_semaphores.resize(swapchainImageCount);
+    for(uint32_t i = 0; i < swapchainImageCount; i++) {
+        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &draw_completed_semaphores[i]));
+    }
+    VkFenceCreateInfo fence_create = {
+        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+        .pNext = NULL,
+        .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+    };
+    draw_completed_fences.resize(MAX_IN_FLIGHT);
+    for(uint32_t i = 0; i < draw_completed_fences.size(); i++) {
+        VK_CHECK(vkCreateFence(device, &fence_create, nullptr, &draw_completed_fences[i]));
+    }
 
     std::vector<VkImageView> colorImageViews(swapchainImageCount);
     for(uint32_t i = 0; i < swapchainImageCount; i++) {
@@ -830,14 +872,6 @@ void InitializeState(int windowWidth, int windowHeight)
         };
         VK_CHECK(vkCreateImageView(device, &colorImageViewCreate, nullptr, &colorImageViews[i]));
     }
-
-    VkCommandPoolCreateInfo create_command_pool{
-        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        .pNext = nullptr,
-        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-        .queueFamilyIndex = graphics_queue,
-    };
-    VK_CHECK(vkCreateCommandPool(device, &create_command_pool, nullptr, &command_pool));
 
     const VkCommandBufferAllocateInfo allocate{
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
@@ -900,6 +934,8 @@ void InitializeState(int windowWidth, int windowHeight)
         },
     };
     VK_CHECK(vkCreateImageView(device, &depthImageViewCreate, nullptr, &depthImageView));
+
+// rendering stuff - pipelines, binding & drawing commands
 
     VkAttachmentDescription attachments[2] = {
         {
@@ -1008,25 +1044,25 @@ void InitializeState(int windowWidth, int windowHeight)
         .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
     };
 
-    VkVertexInputAttributeDescription vertex_position{
+    VkVertexInputAttributeDescription vertex_position {
         .location = 0,
         .binding = 0,
         .format = VK_FORMAT_R32G32B32_SFLOAT,
         .offset = offsetof(Vertex, v),
     };
-    VkVertexInputAttributeDescription vertex_normal{
+    VkVertexInputAttributeDescription vertex_normal {
         .location = 1,
         .binding = 0,
         .format = VK_FORMAT_R32G32B32_SFLOAT,
         .offset = offsetof(Vertex, n),
     };
-    VkVertexInputAttributeDescription vertex_color{
+    VkVertexInputAttributeDescription vertex_color {
         .location = 2,
         .binding = 0,
         .format = VK_FORMAT_R32G32B32A32_SFLOAT,
         .offset = offsetof(Vertex, c),
     };
-    VkVertexInputAttributeDescription vertex_texcoord{
+    VkVertexInputAttributeDescription vertex_texcoord {
         .location = 3,
         .binding = 0,
         .format = VK_FORMAT_R32G32_SFLOAT,
@@ -1248,32 +1284,6 @@ void InitializeState(int windowWidth, int windowHeight)
     };
 
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &create_pipeline, nullptr, &pipeline));
-
-    // XXX create a timeline semaphore by chaining after a
-    // VkSemaphoreTypeCreateInfo with VkSemaphoreTypeCreateInfo =
-    // VK_SEMAPHORE_TYPE_TIMELINE
-    VkSemaphoreCreateInfo sema_create = {
-        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-        .pNext = NULL,
-        .flags = 0,
-    };
-    image_acquired_semaphores.resize(swapchainImageCount);
-    for(uint32_t i = 0; i < swapchainImageCount; i++) {
-        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &image_acquired_semaphores[i]));
-    }
-    draw_completed_semaphores.resize(swapchainImageCount);
-    for(uint32_t i = 0; i < swapchainImageCount; i++) {
-        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &draw_completed_semaphores[i]));
-    }
-    VkFenceCreateInfo fence_create = {
-        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-        .pNext = NULL,
-        .flags = VK_FENCE_CREATE_SIGNALED_BIT,
-    };
-    draw_completed_fences.resize(MAX_IN_FLIGHT);
-    for(uint32_t i = 0; i < draw_completed_fences.size(); i++) {
-        VK_CHECK(vkCreateFence(device, &fence_create, nullptr, &draw_completed_fences[i]));
-    }
 }
 
 void Cleanup()
