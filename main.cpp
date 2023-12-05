@@ -216,7 +216,7 @@ void CreateInstance(VkInstance* instance, bool enableValidation)
 
     extension_set.insert(VK_KHR_SURFACE_EXTENSION_NAME);
 #if defined(PLATFORM_WINDOWS)
-    extension_set.insert(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
+    extension_set.insert("VK_KHR_win32_surface");
 #elif defined(PLATFORM_LINUX)
     extension_set.insert(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
 #elif defined(PLATFORM_MACOS)
