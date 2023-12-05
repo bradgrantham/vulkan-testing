@@ -216,11 +216,11 @@ void CreateInstance(VkInstance* instance, bool enableValidation)
 
     extension_set.insert(VK_KHR_SURFACE_EXTENSION_NAME);
 #if defined(PLATFORM_WINDOWS)
-    extension_set.insert("VK_KHR_win32_surface");
+    extension_set.insert(VK_KHR_WIN32_SURFACE_EXTENSION_NAME);
 #elif defined(PLATFORM_LINUX)
-    extension_set.insert("VK_KHR_xcb_surface");
+    extension_set.insert(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
 #elif defined(PLATFORM_MACOS)
-    extension_set.insert("VK_MVK_macos_surface");
+    extension_set.insert(VK_MVK_MACOS_SURFACE_EXTENSION_NAME);
     extension_set.insert(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
 #endif
 
@@ -242,8 +242,8 @@ void CreateInstance(VkInstance* instance, bool enableValidation)
 
 	VkApplicationInfo app_info {
             .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
-            .pApplicationName = "triangle",
-            .pEngineName = "triangle",
+            .pApplicationName = "vulkan-test-grantham",
+            .pEngineName = "vulkan-test-grantham",
             .apiVersion = VK_API_VERSION_1_2,
         };
 
