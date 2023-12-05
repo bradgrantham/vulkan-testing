@@ -864,8 +864,40 @@ void InitializeState(int windowWidth, int windowHeight)
         VK_CHECK(vkCreateImageView(device, &colorImageViewCreate, nullptr, &colorImageViews[i]));
     }
 
+    VkDescriptorPoolSize pool_sizes = {
+        .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = swapchainImageCount,
+    };
+    VkDescriptorPoolCreateInfo create_descriptor_pool {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .maxSets = swapchainImageCount, // XXX could limit to SUBMISSIONS_IN_FLIGHT?
+        .poolSizeCount = 1,
+        .pPoolSizes = &pool_sizes,
+    };
+    VK_CHECK(vkCreateDescriptorPool(device, &create_descriptor_pool, nullptr, &descriptor_pool));
+
+    VkDescriptorSetLayoutBinding vertex_ub_binding {
+        .binding = 0,
+        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = 1,
+        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+        .pImmutableSamplers = nullptr,
+    };
+
+    VkDescriptorSetLayoutCreateInfo descriptor_set_layout_create {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .pNext = nullptr,
+        .flags = 0,
+        .bindingCount = 1,
+        .pBindings = &vertex_ub_binding,
+    };
+    VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptor_set_layout_create, nullptr, &descriptor_set_layout));
+
     for(uint32_t i = 0; i < SUBMISSIONS_IN_FLIGHT; i++) {
-        const VkCommandBufferAllocateInfo allocate{
+
+        const VkCommandBufferAllocateInfo allocate {
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
             .pNext = nullptr,
             .commandPool = command_pool,
@@ -874,14 +906,14 @@ void InitializeState(int windowWidth, int windowHeight)
         };
         VK_CHECK(vkAllocateCommandBuffers(device, &allocate, &submissions[i].command_buffer));
 
-        VkFenceCreateInfo fence_create = {
+        VkFenceCreateInfo fence_create {
             .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
             .pNext = NULL,
             .flags = VK_FENCE_CREATE_SIGNALED_BIT,
         };
         VK_CHECK(vkCreateFence(device, &fence_create, nullptr, &submissions[i].draw_completed_fence));
 
-        VkSemaphoreCreateInfo sema_create = {
+        VkSemaphoreCreateInfo sema_create {
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
             .pNext = NULL,
             .flags = 0,
@@ -911,7 +943,10 @@ void InitializeState(int windowWidth, int windowHeight)
         VkMemoryRequirements memory_req;
         vkGetBufferMemoryRequirements(device, ubo.buf, &memory_req);
 
-        memoryTypeIndex = getMemoryTypeIndex(memory_properties, memory_req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VkPhysicalDeviceMemoryProperties memory_properties;
+        vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+
+        uint32_t memoryTypeIndex = getMemoryTypeIndex(memory_properties, memory_req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         VkMemoryAllocateInfo memory_alloc {
             .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
             .pNext = nullptr,
@@ -921,11 +956,7 @@ void InitializeState(int windowWidth, int windowHeight)
         VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &ubo.mem));
         VK_CHECK(vkBindBufferMemory(device, ubo.buf, ubo.mem, 0));
         VK_CHECK(vkMapMemory(device, ubo.mem, 0, sizeof(VertexUniforms), 0, &ubo.mapped));
-
     }
-
-    VkPhysicalDeviceMemoryProperties memory_properties;
-    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
 
     VkFormat depthFormat = VK_FORMAT_D32_SFLOAT_S8_UINT;
     VkImageCreateInfo createDepthInfo {
@@ -943,8 +974,13 @@ void InitializeState(int windowWidth, int windowHeight)
     };
     VkImage depthImage;
     VK_CHECK(vkCreateImage(device, &createDepthInfo, nullptr, &depthImage));
+
     VkMemoryRequirements imageMemReqs;
     vkGetImageMemoryRequirements(device, depthImage, &imageMemReqs);
+
+    VkPhysicalDeviceMemoryProperties memory_properties;
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+
     uint32_t memoryTypeIndex = getMemoryTypeIndex(memory_properties, imageMemReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     VkDeviceMemory depthImageMemory;
     VkMemoryAllocateInfo depthAllocate{
@@ -1208,39 +1244,6 @@ void InitializeState(int windowWidth, int windowHeight)
     };
     std::vector<VkPipelineShaderStageCreateInfo> shaderStages{vertexShaderCreate, fragmentShaderCreate};
 
-    VkDescriptorSetLayoutBinding binding {
-        .binding = 0,
-        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .descriptorCount = 1,
-        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-        .pImmutableSamplers = nullptr,
-    };
-
-    VkDescriptorSetLayoutCreateInfo descriptor_set_layout_create {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .pNext = nullptr,
-        .flags = 0,
-        .bindingCount = 1,
-        .pBindings = &binding,
-    };
-    VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptor_set_layout_create, nullptr, &descriptor_set_layout));
-
-    VkDescriptorPoolSize pool_sizes = {
-        .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .descriptorCount = swapchainImageCount,
-    };
-    VkDescriptorPoolCreateInfo create_descriptor_pool {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .pNext = nullptr,
-        .flags = 0,
-        .maxSets = swapchainImageCount, // XXX could limit to SUBMISSIONS_IN_FLIGHT?
-        .poolSizeCount = 1,
-        .pPoolSizes = &pool_sizes,
-    };
-    VK_CHECK(vkCreateDescriptorPool(device, &create_descriptor_pool, nullptr, &descriptor_pool));
-
-    }
-
     for(uint32_t i = 0 ; i < SUBMISSIONS_IN_FLIGHT; i++) {
         VkDescriptorBufferInfo buffer_info {
             .buffer = submissions[i].uniform_buffer.buf,
@@ -1293,8 +1296,8 @@ void InitializeState(int windowWidth, int windowHeight)
 void WaitForAllDrawsCompleted()
 {
     for(auto& submission: submissions) {
-        VK_CHECK(vkWaitForFences(device, 1, &submission.fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
-        VK_CHECK(vkResetFences(device, 1, &submission.fence));
+        VK_CHECK(vkWaitForFences(device, 1, &submission.draw_completed_fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
+        VK_CHECK(vkResetFences(device, 1, &submission.draw_completed_fence));
     }
 }
 
