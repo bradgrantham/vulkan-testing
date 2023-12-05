@@ -682,8 +682,6 @@ VkDevice device;
 uint32_t graphics_queue_family = NO_QUEUE_FAMILY;
 VkSurfaceKHR surface;
 VkSwapchainKHR swapchain;
-
-// ??
 VkCommandPool command_pool;
 VkQueue queue;
 
@@ -694,8 +692,6 @@ std::vector<VkImage> swapchainImages;
 std::vector<VkSemaphore> image_acquired_semaphores;
 std::vector<VkFramebuffer> framebuffers;
 
-// Aren't these just for parallelism and don't need swapchainCount for these?
-static constexpr int SUBMISSIONS_IN_FLIGHT = 2;
 int submission_index = 0;
 struct Submission {
     VkCommandBuffer command_buffer;
@@ -704,8 +700,8 @@ struct Submission {
     VkDescriptorSet descriptor_set;
     Buffer uniform_buffer;
 };
+static constexpr int SUBMISSIONS_IN_FLIGHT = 2;
 std::vector<Submission> submissions(SUBMISSIONS_IN_FLIGHT);
-
 
 // rendering stuff - pipelines, binding & drawing commands
 VkPipelineLayout pipeline_layout;
@@ -739,6 +735,93 @@ void InitializeInstance()
         PrintImplementationInformation();
     }
     CreateInstance(&instance, enableValidation);
+}
+
+void CreatePerSubmissionData()
+{
+    for(uint32_t i = 0; i < SUBMISSIONS_IN_FLIGHT; i++) {
+
+        auto& submission = submissions[i];
+
+        const VkCommandBufferAllocateInfo allocate {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .pNext = nullptr,
+            .commandPool = command_pool,
+            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1,
+        };
+        VK_CHECK(vkAllocateCommandBuffers(device, &allocate, &submission.command_buffer));
+
+        VkFenceCreateInfo fence_create {
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .pNext = NULL,
+            .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+        };
+        VK_CHECK(vkCreateFence(device, &fence_create, nullptr, &submission.draw_completed_fence));
+
+        VkSemaphoreCreateInfo sema_create {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            .pNext = NULL,
+            .flags = 0,
+        };
+        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &submission.draw_completed_semaphore));
+
+        VkDescriptorSetAllocateInfo allocate_descriptor_set {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .pNext = nullptr,
+            .descriptorPool = descriptor_pool,
+            .descriptorSetCount = 1,
+            .pSetLayouts = &descriptor_set_layout,
+        };
+        VK_CHECK(vkAllocateDescriptorSets(device, &allocate_descriptor_set, &submission.descriptor_set));
+
+        VkBufferCreateInfo create_buffer {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .pNext = nullptr,
+            .size = sizeof(VertexUniforms),
+            .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        };
+
+        auto& ubo = submission.uniform_buffer;
+
+        VK_CHECK(vkCreateBuffer(device, &create_buffer, nullptr, &ubo.buf));
+
+        VkMemoryRequirements memory_req;
+        vkGetBufferMemoryRequirements(device, ubo.buf, &memory_req);
+
+        VkPhysicalDeviceMemoryProperties memory_properties;
+        vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+
+        uint32_t memoryTypeIndex = getMemoryTypeIndex(memory_properties, memory_req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VkMemoryAllocateInfo memory_alloc {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .pNext = nullptr,
+            .allocationSize = memory_req.size,
+            .memoryTypeIndex = memoryTypeIndex,
+        };
+        VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &ubo.mem));
+        VK_CHECK(vkBindBufferMemory(device, ubo.buf, ubo.mem, 0));
+        VK_CHECK(vkMapMemory(device, ubo.mem, 0, sizeof(VertexUniforms), 0, &ubo.mapped));
+
+        VkDescriptorBufferInfo buffer_info {
+            .buffer = submission.uniform_buffer.buf,
+            .range = sizeof(VertexUniforms),
+        };
+
+        VkWriteDescriptorSet write_descriptor_set {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .pNext = nullptr,
+            .dstSet = submission.descriptor_set,
+            .dstBinding = 0,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .pImageInfo = nullptr,
+            .pBufferInfo = &buffer_info,
+            .pTexelBufferView = nullptr,
+        };
+        vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, nullptr);
+    }
 }
 
 void InitializeState(int windowWidth, int windowHeight)
@@ -895,68 +978,7 @@ void InitializeState(int windowWidth, int windowHeight)
     };
     VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptor_set_layout_create, nullptr, &descriptor_set_layout));
 
-    for(uint32_t i = 0; i < SUBMISSIONS_IN_FLIGHT; i++) {
-
-        const VkCommandBufferAllocateInfo allocate {
-            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-            .pNext = nullptr,
-            .commandPool = command_pool,
-            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-            .commandBufferCount = 1,
-        };
-        VK_CHECK(vkAllocateCommandBuffers(device, &allocate, &submissions[i].command_buffer));
-
-        VkFenceCreateInfo fence_create {
-            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-            .pNext = NULL,
-            .flags = VK_FENCE_CREATE_SIGNALED_BIT,
-        };
-        VK_CHECK(vkCreateFence(device, &fence_create, nullptr, &submissions[i].draw_completed_fence));
-
-        VkSemaphoreCreateInfo sema_create {
-            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-            .pNext = NULL,
-            .flags = 0,
-        };
-        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &submissions[i].draw_completed_semaphore));
-
-        VkDescriptorSetAllocateInfo allocate_descriptor_set {
-            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-            .pNext = nullptr,
-            .descriptorPool = descriptor_pool,
-            .descriptorSetCount = 1,
-            .pSetLayouts = &descriptor_set_layout,
-        };
-        VK_CHECK(vkAllocateDescriptorSets(device, &allocate_descriptor_set, &submissions[i].descriptor_set));
-
-        VkBufferCreateInfo create_buffer {
-            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .pNext = nullptr,
-            .size = sizeof(VertexUniforms),
-            .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-        };
-
-        auto& ubo = submissions[i].uniform_buffer;
-
-        VK_CHECK(vkCreateBuffer(device, &create_buffer, nullptr, &ubo.buf));
-
-        VkMemoryRequirements memory_req;
-        vkGetBufferMemoryRequirements(device, ubo.buf, &memory_req);
-
-        VkPhysicalDeviceMemoryProperties memory_properties;
-        vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
-
-        uint32_t memoryTypeIndex = getMemoryTypeIndex(memory_properties, memory_req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        VkMemoryAllocateInfo memory_alloc {
-            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-            .pNext = nullptr,
-            .allocationSize = memory_req.size,
-            .memoryTypeIndex = memoryTypeIndex,
-        };
-        VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &ubo.mem));
-        VK_CHECK(vkBindBufferMemory(device, ubo.buf, ubo.mem, 0));
-        VK_CHECK(vkMapMemory(device, ubo.mem, 0, sizeof(VertexUniforms), 0, &ubo.mapped));
-    }
+    CreatePerSubmissionData();
 
     VkFormat depthFormat = VK_FORMAT_D32_SFLOAT_S8_UINT;
     VkImageCreateInfo createDepthInfo {
@@ -1244,27 +1266,6 @@ void InitializeState(int windowWidth, int windowHeight)
     };
     std::vector<VkPipelineShaderStageCreateInfo> shaderStages{vertexShaderCreate, fragmentShaderCreate};
 
-    for(uint32_t i = 0 ; i < SUBMISSIONS_IN_FLIGHT; i++) {
-        VkDescriptorBufferInfo buffer_info {
-            .buffer = submissions[i].uniform_buffer.buf,
-            .range = sizeof(VertexUniforms),
-        };
-
-        VkWriteDescriptorSet write_descriptor_set {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .pNext = nullptr,
-            .dstSet = submissions[i].descriptor_set,
-            .dstBinding = 0,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .pImageInfo = nullptr,
-            .pBufferInfo = &buffer_info,
-            .pTexelBufferView = nullptr,
-        };
-        vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, nullptr);
-    }
-
     VkPipelineLayoutCreateInfo create_layout {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .pNext = nullptr,
@@ -1312,8 +1313,10 @@ static void DrawFrame(GLFWwindow *window)
     int windowWidth, windowHeight;
     glfwGetWindowSize(window, &windowWidth, &windowHeight);
 
-    VK_CHECK(vkWaitForFences(device, 1, &submissions[submission_index].draw_completed_fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
-    VK_CHECK(vkResetFences(device, 1, &submissions[submission_index].draw_completed_fence));
+    auto& submission = submissions[submission_index];
+
+    VK_CHECK(vkWaitForFences(device, 1, &submission.draw_completed_fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
+    VK_CHECK(vkResetFences(device, 1, &submission.draw_completed_fence));
 
     [[maybe_unused]] static float frame = 0.0;
     frame += 1;
@@ -1333,14 +1336,14 @@ static void DrawFrame(GLFWwindow *window)
     float frustumLeft = -frustumRight;
     mat4f projection = mat4f::frustum(frustumLeft, frustumRight, frustumTop, frustumBottom, nearClip, farClip);
 
-    uint8_t *ubo = static_cast<uint8_t*>(submissions[submission_index].uniform_buffer.mapped);
+    uint8_t *ubo = static_cast<uint8_t*>(submission.uniform_buffer.mapped);
     memcpy(ubo + sizeof(mat4f) * 0, modelview.m_v, sizeof(mat4f));
     memcpy(ubo + sizeof(mat4f) * 1, modelview_normal.m_v, sizeof(mat4f));
     memcpy(ubo + sizeof(mat4f) * 2, projection.m_v, sizeof(mat4f));
 
     VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, image_acquired_semaphores[swapchainIndex], VK_NULL_HANDLE, &swapchainIndex));
 
-    auto cb = submissions[submission_index].command_buffer;
+    auto cb = submission.command_buffer;
 
     VkCommandBufferBeginInfo begin {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -1368,7 +1371,7 @@ static void DrawFrame(GLFWwindow *window)
     // 6. Bind the graphics pipeline state
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &submissions[submission_index].descriptor_set, 0, NULL);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &submission.descriptor_set, 0, NULL);
 
     // 8. Bind the texture resources - NA
 
@@ -1398,9 +1401,9 @@ static void DrawFrame(GLFWwindow *window)
         .commandBufferCount = 1,
         .pCommandBuffers = &cb,
         .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &submissions[submission_index].draw_completed_semaphore,
+        .pSignalSemaphores = &submission.draw_completed_semaphore,
     };
-    VK_CHECK(vkQueueSubmit(queue, 1, &submit, submissions[submission_index].draw_completed_fence));
+    VK_CHECK(vkQueueSubmit(queue, 1, &submit, submission.draw_completed_fence));
 
     // 13. Present the rendered result
     uint32_t swapchainIndices[] = {swapchainIndex};
@@ -1408,7 +1411,7 @@ static void DrawFrame(GLFWwindow *window)
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
             .pNext = nullptr,
             .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &submissions[submission_index].draw_completed_semaphore,
+            .pWaitSemaphores = &submission.draw_completed_semaphore,
             .swapchainCount = 1,
             .pSwapchains = &swapchain,
             .pImageIndices = swapchainIndices,
@@ -1417,7 +1420,7 @@ static void DrawFrame(GLFWwindow *window)
     VK_CHECK(vkQueuePresentKHR(queue, &present));
 
     swapchainIndex = (swapchainIndex + 1) % swapchainImageCount;
-    submission_index = (submission_index + 1) % SUBMISSIONS_IN_FLIGHT;
+    submission_index = (submission_index + 1) % submissions.size();
 }
 
 };
