@@ -697,12 +697,15 @@ std::vector<VkFramebuffer> framebuffers;
 // Aren't these just for parallelism and don't need swapchainCount for these?
 static constexpr int SUBMISSIONS_IN_FLIGHT = 2;
 int submission_index = 0;
-std::vector<VkCommandBuffer> commandBuffers;
-std::vector<VkFence> draw_completed_fences;
-std::vector<VkSemaphore> draw_completed_semaphores;
-std::vector<VkDescriptorSet> descriptor_sets;
+struct Submission {
+    VkCommandBuffer command_buffer;
+    VkFence draw_completed_fence;
+    VkSemaphore draw_completed_semaphore;
+    VkDescriptorSet descriptor_set;
+    Buffer uniform_buffer;
+};
+std::vector<Submission> submissions(SUBMISSIONS_IN_FLIGHT);
 
-std::vector<Buffer> uniform_buffers;
 
 // rendering stuff - pipelines, binding & drawing commands
 VkPipelineLayout pipeline_layout;
@@ -830,28 +833,14 @@ void InitializeState(int windowWidth, int windowHeight)
     // XXX create a timeline semaphore by chaining after a
     // VkSemaphoreTypeCreateInfo with VkSemaphoreTypeCreateInfo =
     // VK_SEMAPHORE_TYPE_TIMELINE
-    VkSemaphoreCreateInfo sema_create = {
-        .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-        .pNext = NULL,
-        .flags = 0,
-    };
     image_acquired_semaphores.resize(swapchainImageCount);
     for(uint32_t i = 0; i < image_acquired_semaphores.size(); i++) {
+        VkSemaphoreCreateInfo sema_create = {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            .pNext = NULL,
+            .flags = 0,
+        };
         VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &image_acquired_semaphores[i]));
-    }
-    draw_completed_semaphores.resize(SUBMISSIONS_IN_FLIGHT);
-    for(uint32_t i = 0; i < draw_completed_semaphores.size(); i++) {
-        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &draw_completed_semaphores[i]));
-    }
-
-    VkFenceCreateInfo fence_create = {
-        .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-        .pNext = NULL,
-        .flags = VK_FENCE_CREATE_SIGNALED_BIT,
-    };
-    draw_completed_fences.resize(SUBMISSIONS_IN_FLIGHT);
-    for(uint32_t i = 0; i < draw_completed_fences.size(); i++) {
-        VK_CHECK(vkCreateFence(device, &fence_create, nullptr, &draw_completed_fences[i]));
     }
 
     std::vector<VkImageView> colorImageViews(swapchainImageCount);
@@ -875,15 +864,65 @@ void InitializeState(int windowWidth, int windowHeight)
         VK_CHECK(vkCreateImageView(device, &colorImageViewCreate, nullptr, &colorImageViews[i]));
     }
 
-    const VkCommandBufferAllocateInfo allocate{
-        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .pNext = nullptr,
-        .commandPool = command_pool,
-        .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-        .commandBufferCount = SUBMISSIONS_IN_FLIGHT,
-    };
-    commandBuffers.resize(allocate.commandBufferCount);
-    VK_CHECK(vkAllocateCommandBuffers(device, &allocate, commandBuffers.data()));
+    for(uint32_t i = 0; i < SUBMISSIONS_IN_FLIGHT; i++) {
+        const VkCommandBufferAllocateInfo allocate{
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .pNext = nullptr,
+            .commandPool = command_pool,
+            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1,
+        };
+        VK_CHECK(vkAllocateCommandBuffers(device, &allocate, &submissions[i].command_buffer));
+
+        VkFenceCreateInfo fence_create = {
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .pNext = NULL,
+            .flags = VK_FENCE_CREATE_SIGNALED_BIT,
+        };
+        VK_CHECK(vkCreateFence(device, &fence_create, nullptr, &submissions[i].draw_completed_fence));
+
+        VkSemaphoreCreateInfo sema_create = {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            .pNext = NULL,
+            .flags = 0,
+        };
+        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &submissions[i].draw_completed_semaphore));
+
+        VkDescriptorSetAllocateInfo allocate_descriptor_set {
+            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+            .pNext = nullptr,
+            .descriptorPool = descriptor_pool,
+            .descriptorSetCount = 1,
+            .pSetLayouts = &descriptor_set_layout,
+        };
+        VK_CHECK(vkAllocateDescriptorSets(device, &allocate_descriptor_set, &submissions[i].descriptor_set));
+
+        VkBufferCreateInfo create_buffer {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .pNext = nullptr,
+            .size = sizeof(VertexUniforms),
+            .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
+        };
+
+        auto& ubo = submissions[i].uniform_buffer;
+
+        VK_CHECK(vkCreateBuffer(device, &create_buffer, nullptr, &ubo.buf));
+
+        VkMemoryRequirements memory_req;
+        vkGetBufferMemoryRequirements(device, ubo.buf, &memory_req);
+
+        memoryTypeIndex = getMemoryTypeIndex(memory_properties, memory_req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VkMemoryAllocateInfo memory_alloc {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .pNext = nullptr,
+            .allocationSize = memory_req.size,
+            .memoryTypeIndex = memoryTypeIndex,
+        };
+        VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &ubo.mem));
+        VK_CHECK(vkBindBufferMemory(device, ubo.buf, ubo.mem, 0));
+        VK_CHECK(vkMapMemory(device, ubo.mem, 0, sizeof(VertexUniforms), 0, &ubo.mapped));
+
+    }
 
     VkPhysicalDeviceMemoryProperties memory_properties;
     vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
@@ -1200,55 +1239,18 @@ void InitializeState(int windowWidth, int windowHeight)
     };
     VK_CHECK(vkCreateDescriptorPool(device, &create_descriptor_pool, nullptr, &descriptor_pool));
 
-    descriptor_sets.resize(SUBMISSIONS_IN_FLIGHT);
-    for(uint32_t i = 0 ; i < descriptor_sets.size(); i++) {
-        VkDescriptorSetAllocateInfo allocate_descriptor_set {
-            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-            .pNext = nullptr,
-            .descriptorPool = descriptor_pool,
-            .descriptorSetCount = 1,
-            .pSetLayouts = &descriptor_set_layout,
-        };
-        VK_CHECK(vkAllocateDescriptorSets(device, &allocate_descriptor_set, &descriptor_sets[i]));
-    }
-
-    uniform_buffers.resize(SUBMISSIONS_IN_FLIGHT);
-    for(uint32_t i = 0 ; i < uniform_buffers.size(); i++) {
-        VkBufferCreateInfo create_buffer {
-            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .pNext = nullptr,
-            .size = sizeof(VertexUniforms),
-            .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-        };
-
-        VK_CHECK(vkCreateBuffer(device, &create_buffer, nullptr, &uniform_buffers[i].buf));
-
-        VkMemoryRequirements memory_req;
-        vkGetBufferMemoryRequirements(device, uniform_buffers[i].buf, &memory_req);
-
-        memoryTypeIndex = getMemoryTypeIndex(memory_properties, memory_req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        VkMemoryAllocateInfo memory_alloc {
-            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-            .pNext = nullptr,
-            .allocationSize = memory_req.size,
-            .memoryTypeIndex = memoryTypeIndex,
-        };
-        VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &uniform_buffers[i].mem));
-        VK_CHECK(vkBindBufferMemory(device, uniform_buffers[i].buf, uniform_buffers[i].mem, 0));
-        VK_CHECK(vkMapMemory(device, uniform_buffers[i].mem, 0, sizeof(VertexUniforms), 0, &uniform_buffers[i].mapped));
-
     }
 
     for(uint32_t i = 0 ; i < SUBMISSIONS_IN_FLIGHT; i++) {
         VkDescriptorBufferInfo buffer_info {
-            .buffer = uniform_buffers[i].buf,
+            .buffer = submissions[i].uniform_buffer.buf,
             .range = sizeof(VertexUniforms),
         };
 
         VkWriteDescriptorSet write_descriptor_set {
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .pNext = nullptr,
-            .dstSet = descriptor_sets[i],
+            .dstSet = submissions[i].descriptor_set,
             .dstBinding = 0,
             .dstArrayElement = 0,
             .descriptorCount = 1,
@@ -1290,9 +1292,9 @@ void InitializeState(int windowWidth, int windowHeight)
 
 void WaitForAllDrawsCompleted()
 {
-    for(auto& fence: draw_completed_fences) {
-        VK_CHECK(vkWaitForFences(device, 1, &fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
-        VK_CHECK(vkResetFences(device, 1, &fence));
+    for(auto& submission: submissions) {
+        VK_CHECK(vkWaitForFences(device, 1, &submission.fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
+        VK_CHECK(vkResetFences(device, 1, &submission.fence));
     }
 }
 
@@ -1307,8 +1309,8 @@ static void DrawFrame(GLFWwindow *window)
     int windowWidth, windowHeight;
     glfwGetWindowSize(window, &windowWidth, &windowHeight);
 
-    VK_CHECK(vkWaitForFences(device, 1, &draw_completed_fences[submission_index], VK_TRUE, DEFAULT_FENCE_TIMEOUT));
-    VK_CHECK(vkResetFences(device, 1, &draw_completed_fences[submission_index]));
+    VK_CHECK(vkWaitForFences(device, 1, &submissions[submission_index].draw_completed_fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
+    VK_CHECK(vkResetFences(device, 1, &submissions[submission_index].draw_completed_fence));
 
     [[maybe_unused]] static float frame = 0.0;
     frame += 1;
@@ -1328,14 +1330,14 @@ static void DrawFrame(GLFWwindow *window)
     float frustumLeft = -frustumRight;
     mat4f projection = mat4f::frustum(frustumLeft, frustumRight, frustumTop, frustumBottom, nearClip, farClip);
 
-    uint8_t *ubo = static_cast<uint8_t*>(uniform_buffers[submission_index].mapped);
+    uint8_t *ubo = static_cast<uint8_t*>(submissions[submission_index].uniform_buffer.mapped);
     memcpy(ubo + sizeof(mat4f) * 0, modelview.m_v, sizeof(mat4f));
     memcpy(ubo + sizeof(mat4f) * 1, modelview_normal.m_v, sizeof(mat4f));
     memcpy(ubo + sizeof(mat4f) * 2, projection.m_v, sizeof(mat4f));
 
     VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, image_acquired_semaphores[swapchainIndex], VK_NULL_HANDLE, &swapchainIndex));
 
-    auto cb = commandBuffers[submission_index];
+    auto cb = submissions[submission_index].command_buffer;
 
     VkCommandBufferBeginInfo begin {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
@@ -1363,7 +1365,7 @@ static void DrawFrame(GLFWwindow *window)
     // 6. Bind the graphics pipeline state
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &descriptor_sets[submission_index], 0, NULL);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &submissions[submission_index].descriptor_set, 0, NULL);
 
     // 8. Bind the texture resources - NA
 
@@ -1393,9 +1395,9 @@ static void DrawFrame(GLFWwindow *window)
         .commandBufferCount = 1,
         .pCommandBuffers = &cb,
         .signalSemaphoreCount = 1,
-        .pSignalSemaphores = &draw_completed_semaphores[submission_index],
+        .pSignalSemaphores = &submissions[submission_index].draw_completed_semaphore,
     };
-    VK_CHECK(vkQueueSubmit(queue, 1, &submit, draw_completed_fences[submission_index]));
+    VK_CHECK(vkQueueSubmit(queue, 1, &submit, submissions[submission_index].draw_completed_fence));
 
     // 13. Present the rendered result
     uint32_t swapchainIndices[] = {swapchainIndex};
@@ -1403,7 +1405,7 @@ static void DrawFrame(GLFWwindow *window)
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
             .pNext = nullptr,
             .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &draw_completed_semaphores[submission_index],
+            .pWaitSemaphores = &submissions[submission_index].draw_completed_semaphore,
             .swapchainCount = 1,
             .pSwapchains = &swapchain,
             .pImageIndices = swapchainIndices,
