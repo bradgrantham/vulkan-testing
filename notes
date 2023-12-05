@@ -1,1 +1,14 @@
+cleanup
+    separate
+        rendering stuff - pipelines, binding & drawing commands
+        frame stuff - swapchains, fences, semaphores
+        non-frame stuff - instance, queue, device, ...?
+    better shader
+        parameterize lighting into shader
+        allow manipulating the light
+        shininess
+        object colors
+    try a second objct
+raytracing
 texturing
+load simple gltf2s
