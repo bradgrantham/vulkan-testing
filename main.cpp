@@ -182,13 +182,6 @@ struct Vertex
         std::copy(t_, t_ + 2, t);
     }
     Vertex() {}
-    // Vertex(const Vertex &v_)
-    // {
-        // std::copy(v_.v, v_.v + 3, v);
-        // std::copy(v_.n, v_.n + 3, n);
-        // std::copy(v_.c, v_.c + 4, c);
-        // std::copy(v_.t, v_.t + 2, t);
-    // }
 };
 
 struct Buffer
@@ -1139,8 +1132,8 @@ void InitializeState(int windowWidth, int windowHeight)
 
     VkVertexInputAttributeDescription vertex_position {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, v)};
     VkVertexInputAttributeDescription vertex_normal{1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, n)};
-    VkVertexInputAttributeDescription vertex_color{2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, c)};
-    VkVertexInputAttributeDescription vertex_texcoord{3, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, t)};
+    VkVertexInputAttributeDescription vertex_color{2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Vertex, c)};
+    VkVertexInputAttributeDescription vertex_texcoord{3, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, t)};
     std::vector<VkVertexInputAttributeDescription> vertex_input_attributes{vertex_position, vertex_normal, vertex_color, vertex_texcoord};
 
     VkPipelineVertexInputStateCreateInfo vertex_input_state {
@@ -1549,7 +1542,7 @@ void LoadModel(const char *filename)
 
     FILE* fp = fopen(filename, "r");
     if(fp == nullptr) {
-        fprintf(stderr, "couldn't open file");
+        fprintf(stderr, "couldn't open file\n");
         exit(EXIT_FAILURE);
     }
 
