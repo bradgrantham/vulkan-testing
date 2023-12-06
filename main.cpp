@@ -687,7 +687,7 @@ VkQueue queue;
 
 // frame stuff - swapchains indices, fences, semaphores
 uint32_t swapchainIndex;
-uint32_t swapchainImageCount = 3;
+uint32_t swapchain_image_count = 3;
 std::vector<VkImage> swapchainImages;
 std::vector<VkSemaphore> image_acquired_semaphores;
 std::vector<VkFramebuffer> framebuffers;
@@ -889,7 +889,7 @@ void InitializeState(int windowWidth, int windowHeight)
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .pNext = nullptr,
         .surface = surface,
-        .minImageCount = swapchainImageCount,
+        .minImageCount = swapchain_image_count,
         .imageFormat = chosenFormat,
         .imageColorSpace = chosenColorSpace,
         .imageExtent { static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight) },
@@ -907,16 +907,16 @@ void InitializeState(int windowWidth, int windowHeight)
     VK_CHECK(vkCreateSwapchainKHR(device, &create, nullptr, &swapchain));
 
 // frame stuff - swapchains indices, fences, semaphores
-    uint32_t swapchainImageCountReturned;
-    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCountReturned, nullptr));
-    assert(swapchainImageCountReturned == swapchainImageCount);
-    swapchainImages.resize(swapchainImageCount);
-    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchainImageCount, swapchainImages.data()));
+    uint32_t swapchain_image_countReturned;
+    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchain_image_countReturned, nullptr));
+    assert(swapchain_image_countReturned == swapchain_image_count);
+    swapchainImages.resize(swapchain_image_count);
+    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchain_image_count, swapchainImages.data()));
 
     // XXX create a timeline semaphore by chaining after a
     // VkSemaphoreTypeCreateInfo with VkSemaphoreTypeCreateInfo =
     // VK_SEMAPHORE_TYPE_TIMELINE
-    image_acquired_semaphores.resize(swapchainImageCount);
+    image_acquired_semaphores.resize(swapchain_image_count);
     for(uint32_t i = 0; i < image_acquired_semaphores.size(); i++) {
         VkSemaphoreCreateInfo sema_create = {
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
@@ -926,7 +926,7 @@ void InitializeState(int windowWidth, int windowHeight)
         VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &image_acquired_semaphores[i]));
     }
 
-    std::vector<VkImageView> colorImageViews(swapchainImageCount);
+    std::vector<VkImageView> colorImageViews(swapchain_image_count);
     for(uint32_t i = 0; i < colorImageViews.size(); i++) {
         VkImageViewCreateInfo colorImageViewCreate{
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
@@ -947,15 +947,12 @@ void InitializeState(int windowWidth, int windowHeight)
         VK_CHECK(vkCreateImageView(device, &colorImageViewCreate, nullptr, &colorImageViews[i]));
     }
 
-    VkDescriptorPoolSize pool_sizes = {
-        .type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .descriptorCount = swapchainImageCount,
-    };
+    VkDescriptorPoolSize pool_sizes = { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, swapchain_image_count };
     VkDescriptorPoolCreateInfo create_descriptor_pool {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .pNext = nullptr,
         .flags = 0,
-        .maxSets = swapchainImageCount, // XXX could limit to SUBMISSIONS_IN_FLIGHT?
+        .maxSets = swapchain_image_count, // XXX could limit to SUBMISSIONS_IN_FLIGHT?
         .poolSizeCount = 1,
         .pPoolSizes = &pool_sizes,
     };
@@ -1036,38 +1033,33 @@ void InitializeState(int windowWidth, int windowHeight)
 
 // rendering stuff - pipelines, binding & drawing commands
 
-    VkAttachmentDescription attachments[2] = {
-        {
-            .flags = 0,
-            .format = chosenFormat,
-            .samples = VK_SAMPLE_COUNT_1_BIT,
-            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-            .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-            .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
-        },
-        {
-            .flags = 0,
-            .format = depthFormat,
-            .samples = VK_SAMPLE_COUNT_1_BIT,
-            .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
-            .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
-            .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
-            .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
-            .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
-            .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-        }
+    VkAttachmentDescription color_attachment_description {
+        .flags = 0,
+        .format = chosenFormat,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
     };
-    VkAttachmentReference colorReference{
-        .attachment = 0,
-        .layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+    VkAttachmentDescription depth_attachment_description {
+        .flags = 0,
+        .format = depthFormat,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+        .storeOp = VK_ATTACHMENT_STORE_OP_STORE,
+        .stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+        .stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+        .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
+        .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
     };
-    VkAttachmentReference depthReference{
-        .attachment = 1,
-        .layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
-    };
+    VkAttachmentDescription attachments[2] = { color_attachment_description, depth_attachment_description };
+
+    VkAttachmentReference colorReference { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+    VkAttachmentReference depthReference { 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
+
     VkSubpassDescription subpass {
         .flags = 0,
         .pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS,
@@ -1080,7 +1072,8 @@ void InitializeState(int windowWidth, int windowHeight)
         .preserveAttachmentCount = 0,
         .pPreserveAttachments = nullptr,
     };
-    VkSubpassDependency colorAttachmentDependency {
+
+    VkSubpassDependency color_attachment_dependency {
         // Image Layout Transition
         .srcSubpass = VK_SUBPASS_EXTERNAL,
         .dstSubpass = 0,
@@ -1090,7 +1083,7 @@ void InitializeState(int windowWidth, int windowHeight)
         .dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_READ_BIT,
         .dependencyFlags = 0,
     };
-    VkSubpassDependency depthAttachmentDependency {
+    VkSubpassDependency depth_attachment_dependency {
         // Depth buffer is shared between swapchain images
         .srcSubpass = VK_SUBPASS_EXTERNAL,
         .dstSubpass = 0,
@@ -1100,11 +1093,12 @@ void InitializeState(int windowWidth, int windowHeight)
         .dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
         .dependencyFlags = 0,
     };
-    VkSubpassDependency attachmentDependencies[2] {
-        depthAttachmentDependency,
-        colorAttachmentDependency,
+    VkSubpassDependency attachment_dependencies[2] {
+        depth_attachment_dependency,
+        color_attachment_dependency,
     };
-    VkRenderPassCreateInfo renderPassCreate{
+
+    VkRenderPassCreateInfo render_pass_create{
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
         .pNext = nullptr,
         .flags = 0,
@@ -1113,11 +1107,11 @@ void InitializeState(int windowWidth, int windowHeight)
         .subpassCount = 1,
         .pSubpasses = &subpass,
         .dependencyCount = 2,
-        .pDependencies = attachmentDependencies,
+        .pDependencies = attachment_dependencies,
     };
-    VK_CHECK(vkCreateRenderPass(device, &renderPassCreate, nullptr, &renderPass));
+    VK_CHECK(vkCreateRenderPass(device, &render_pass_create, nullptr, &renderPass));
 
-    framebuffers.resize(swapchainImageCount);
+    framebuffers.resize(swapchain_image_count);
     for(uint32_t i = 0; i < framebuffers.size(); i++) {
         VkImageView imageviews[2] = {colorImageViews[i], depthImageView};
         VkFramebufferCreateInfo framebufferCreate{
@@ -1143,30 +1137,10 @@ void InitializeState(int windowWidth, int windowHeight)
         .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
     };
 
-    VkVertexInputAttributeDescription vertex_position {
-        .location = 0,
-        .binding = 0,
-        .format = VK_FORMAT_R32G32B32_SFLOAT,
-        .offset = offsetof(Vertex, v),
-    };
-    VkVertexInputAttributeDescription vertex_normal {
-        .location = 1,
-        .binding = 0,
-        .format = VK_FORMAT_R32G32B32_SFLOAT,
-        .offset = offsetof(Vertex, n),
-    };
-    VkVertexInputAttributeDescription vertex_color {
-        .location = 2,
-        .binding = 0,
-        .format = VK_FORMAT_R32G32B32A32_SFLOAT,
-        .offset = offsetof(Vertex, c),
-    };
-    VkVertexInputAttributeDescription vertex_texcoord {
-        .location = 3,
-        .binding = 0,
-        .format = VK_FORMAT_R32G32_SFLOAT,
-        .offset = offsetof(Vertex, t),
-    };
+    VkVertexInputAttributeDescription vertex_position {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, v)};
+    VkVertexInputAttributeDescription vertex_normal{1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, n)};
+    VkVertexInputAttributeDescription vertex_color{2, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, c)};
+    VkVertexInputAttributeDescription vertex_texcoord{3, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, t)};
     std::vector<VkVertexInputAttributeDescription> vertex_input_attributes{vertex_position, vertex_normal, vertex_color, vertex_texcoord};
 
     VkPipelineVertexInputStateCreateInfo vertex_input_state {
@@ -1406,20 +1380,19 @@ static void DrawFrame(GLFWwindow *window)
     VK_CHECK(vkQueueSubmit(queue, 1, &submit, submission.draw_completed_fence));
 
     // 13. Present the rendered result
-    uint32_t swapchainIndices[] = {swapchainIndex};
     VkPresentInfoKHR present {
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-            .pNext = nullptr,
-            .waitSemaphoreCount = 1,
-            .pWaitSemaphores = &submission.draw_completed_semaphore,
-            .swapchainCount = 1,
-            .pSwapchains = &swapchain,
-            .pImageIndices = swapchainIndices,
-            .pResults = nullptr,
+        .pNext = nullptr,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &submission.draw_completed_semaphore,
+        .swapchainCount = 1,
+        .pSwapchains = &swapchain,
+        .pImageIndices = &swapchainIndex,
+        .pResults = nullptr,
     };
     VK_CHECK(vkQueuePresentKHR(queue, &present));
 
-    swapchainIndex = (swapchainIndex + 1) % swapchainImageCount;
+    swapchainIndex = (swapchainIndex + 1) % swapchain_image_count;
     submission_index = (submission_index + 1) % submissions.size();
 }
 
