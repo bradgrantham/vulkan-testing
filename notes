@@ -1,15 +1,11 @@
 cleanup
-    separate
-        rendering stuff - pipelines, binding & drawing commands
-        frame stuff - swapchains, fences, semaphores
-        non-frame stuff - instance, queue, device, ...?
-        why wouldn't there be SUBMISSIONS_IN_FLIGHT count depth images?
     better shader
         parameterize lighting into shader
-        allow manipulating the light
+        allow manipulating the light - need to separate objectManip and lightManip
         shininess
         object colors
     try a second objct
+    why shouldn't there be SUBMISSIONS_IN_FLIGHT count depth images?
 raytracing
 texturing
 load simple gltf2s
