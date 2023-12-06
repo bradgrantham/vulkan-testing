@@ -149,9 +149,9 @@ void FlushCommandBuffer(VkDevice device, VkQueue queue, VkCommandBuffer commandB
     vkDestroyFence(device, fence, nullptr);
 }
 
-// Sascha Willem's 
 uint32_t getMemoryTypeIndex(VkPhysicalDeviceMemoryProperties memory_properties, uint32_t type_bits, VkMemoryPropertyFlags properties)
 {
+// Sascha Willem's 
     // Iterate over all memory types available for the device used in this example
     for (uint32_t i = 0; i < memory_properties.memoryTypeCount; i++) {
 	if (type_bits & (1 << i)) {
@@ -163,8 +163,6 @@ uint32_t getMemoryTypeIndex(VkPhysicalDeviceMemoryProperties memory_properties, 
 
     throw "Could not find a suitable memory type!";
 }
-
-// Styled somewhat after Sascha Willem's triangle
 
 static constexpr uint32_t NO_QUEUE_FAMILY = 0xffffffff;
 
@@ -390,6 +388,7 @@ VkViewport CalculateViewport(uint32_t windowWidth, uint32_t windowHeight)
     float viewport_dimension;
     float viewport_x = 0.0f;
     float viewport_y = 0.0f;
+
     if (windowWidth < windowHeight) {
         viewport_dimension = static_cast<float>(windowWidth);
         viewport_y = (windowHeight - windowWidth) / 2.0f;
@@ -397,6 +396,7 @@ VkViewport CalculateViewport(uint32_t windowWidth, uint32_t windowHeight)
         viewport_dimension = static_cast<float>(windowHeight);
         viewport_x = (windowWidth - windowHeight) / 2.0f;
     }
+
     VkViewport viewport {
         .x = viewport_x,
         .y = viewport_y,
@@ -408,7 +408,7 @@ VkViewport CalculateViewport(uint32_t windowWidth, uint32_t windowHeight)
     return viewport;
 }
 
-void CreateDevice(VkPhysicalDevice physical_device, const std::vector<const char*>& extensions, uint32_t queue_family, VkDevice* device, VkQueue* queue)
+void CreateDevice(VkPhysicalDevice physical_device, const std::vector<const char*>& extensions, uint32_t queue_family, VkDevice* device)
 {
     float queue_priorities = 1.0f;
 
@@ -431,8 +431,6 @@ void CreateDevice(VkPhysicalDevice physical_device, const std::vector<const char
         .ppEnabledExtensionNames = extensions.data(),
     };
     VK_CHECK(vkCreateDevice(physical_device, &create, nullptr, device));
-
-    vkGetDeviceQueue(*device, queue_family, 0, queue);
 }
 
 void PrintImplementationInformation()
@@ -869,7 +867,8 @@ void InitializeState(int windowWidth, int windowHeight)
         }
     }
 
-    CreateDevice(physical_device, deviceExtensions, graphics_queue_family, &device, &queue);
+    CreateDevice(physical_device, deviceExtensions, graphics_queue_family, &device);
+    vkGetDeviceQueue(device, graphics_queue_family, 0, &queue);
 
     VkCommandPoolCreateInfo create_command_pool{
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
@@ -890,7 +889,6 @@ void InitializeState(int windowWidth, int windowHeight)
     VkPresentModeKHR swapchainPresentMode = VK_PRESENT_MODE_FIFO_KHR;
     // TODO verify present mode with vkGetPhysicalDeviceSurfacePresentModesKHR
 
-// 8. Create a VkSwapchain with desired parameters
     VkSwapchainCreateInfoKHR create {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
         .pNext = nullptr,
@@ -912,7 +910,7 @@ void InitializeState(int windowWidth, int windowHeight)
     };
     VK_CHECK(vkCreateSwapchainKHR(device, &create, nullptr, &swapchain));
 
-// frame stuff - swapchains indices, fences, semaphores
+// frame-related stuff - swapchains indices, fences, semaphores
     auto swapchain_images = GetSwapchainImages(device, swapchain);
     assert(swapchain_image_count == swapchain_images.size());
     swapchain_image_count = swapchain_images.size();
@@ -954,12 +952,12 @@ void InitializeState(int windowWidth, int windowHeight)
         VK_CHECK(vkCreateImageView(device, &colorImageViewCreate, nullptr, &colorImageViews[i]));
     }
 
-    VkDescriptorPoolSize pool_sizes = { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, swapchain_image_count };
+    VkDescriptorPoolSize pool_sizes = { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, SUBMISSIONS_IN_FLIGHT };
     VkDescriptorPoolCreateInfo create_descriptor_pool {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .pNext = nullptr,
         .flags = 0,
-        .maxSets = swapchain_image_count, // XXX could limit to SUBMISSIONS_IN_FLIGHT?
+        .maxSets = SUBMISSIONS_IN_FLIGHT,
         .poolSizeCount = 1,
         .pPoolSizes = &pool_sizes,
     };
