@@ -678,13 +678,7 @@ VkSwapchainKHR swapchain;
 VkCommandPool command_pool;
 VkQueue queue;
 
-// frame stuff - swapchains indices, fences, semaphores
-uint32_t swapchainIndex;
-uint32_t swapchain_image_count = 3;
-std::vector<VkImage> swapchainImages;
-std::vector<VkSemaphore> image_acquired_semaphores;
-std::vector<VkFramebuffer> framebuffers;
-
+// In flight rendering stuff
 int submission_index = 0;
 struct Submission {
     VkCommandBuffer command_buffer;
@@ -695,6 +689,16 @@ struct Submission {
 };
 static constexpr int SUBMISSIONS_IN_FLIGHT = 2;
 std::vector<Submission> submissions(SUBMISSIONS_IN_FLIGHT);
+
+// frame stuff - swapchains indices, fences, semaphores
+uint32_t swapchain_index;
+uint32_t swapchain_image_count = 3;
+struct PerSwapchainImage {
+    VkImage image;
+    VkSemaphore image_acquired_semaphore;
+    VkFramebuffer framebuffer;
+};
+std::vector<PerSwapchainImage> per_swapchainimage;
 
 // rendering stuff - pipelines, binding & drawing commands
 VkPipelineLayout pipeline_layout;
@@ -817,6 +821,15 @@ void CreatePerSubmissionData()
     }
 }
 
+std::vector<VkImage> GetSwapchainImages(VkDevice device, VkSwapchainKHR swapchain) 
+{
+    uint32_t swapchain_image_count;
+    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchain_image_count, nullptr));
+    std::vector<VkImage> swapchain_images(swapchain_image_count);
+    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchain_image_count, swapchain_images.data()));
+    return swapchain_images;
+}
+
 void InitializeState(int windowWidth, int windowHeight)
 {
     // non-frame stuff
@@ -900,23 +913,24 @@ void InitializeState(int windowWidth, int windowHeight)
     VK_CHECK(vkCreateSwapchainKHR(device, &create, nullptr, &swapchain));
 
 // frame stuff - swapchains indices, fences, semaphores
-    uint32_t swapchain_image_countReturned;
-    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchain_image_countReturned, nullptr));
-    assert(swapchain_image_countReturned == swapchain_image_count);
-    swapchainImages.resize(swapchain_image_count);
-    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchain_image_count, swapchainImages.data()));
+    auto swapchain_images = GetSwapchainImages(device, swapchain);
+    assert(swapchain_image_count == swapchain_images.size());
+    swapchain_image_count = swapchain_images.size();
 
-    // XXX create a timeline semaphore by chaining after a
-    // VkSemaphoreTypeCreateInfo with VkSemaphoreTypeCreateInfo =
-    // VK_SEMAPHORE_TYPE_TIMELINE
-    image_acquired_semaphores.resize(swapchain_image_count);
-    for(uint32_t i = 0; i < image_acquired_semaphores.size(); i++) {
+    per_swapchainimage.resize(swapchain_image_count);
+    for(uint32_t i = 0; i < swapchain_image_count; i++) {
+        auto& sd = per_swapchainimage[i];
+        sd.image = swapchain_images[i];
+
+        // XXX create a timeline semaphore by chaining after a
+        // VkSemaphoreTypeCreateInfo with VkSemaphoreTypeCreateInfo =
+        // VK_SEMAPHORE_TYPE_TIMELINE
         VkSemaphoreCreateInfo sema_create = {
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
             .pNext = NULL,
             .flags = 0,
         };
-        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &image_acquired_semaphores[i]));
+        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &sd.image_acquired_semaphore));
     }
 
     std::vector<VkImageView> colorImageViews(swapchain_image_count);
@@ -925,7 +939,7 @@ void InitializeState(int windowWidth, int windowHeight)
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
             .pNext = nullptr,
             .flags = 0,
-            .image = swapchainImages[i],
+            .image = per_swapchainimage[i].image,
             .viewType = VK_IMAGE_VIEW_TYPE_2D,
             .format = chosenFormat,
             .components{VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY},
@@ -1091,7 +1105,7 @@ void InitializeState(int windowWidth, int windowHeight)
         color_attachment_dependency,
     };
 
-    VkRenderPassCreateInfo render_pass_create{
+    VkRenderPassCreateInfo render_pass_create {
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
         .pNext = nullptr,
         .flags = 0,
@@ -1104,10 +1118,9 @@ void InitializeState(int windowWidth, int windowHeight)
     };
     VK_CHECK(vkCreateRenderPass(device, &render_pass_create, nullptr, &renderPass));
 
-    framebuffers.resize(swapchain_image_count);
-    for(uint32_t i = 0; i < framebuffers.size(); i++) {
+    for(uint32_t i = 0; i < swapchain_image_count; i++) {
         VkImageView imageviews[2] = {colorImageViews[i], depthImageView};
-        VkFramebufferCreateInfo framebufferCreate{
+        VkFramebufferCreateInfo framebufferCreate {
             .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
             .pNext = nullptr,
             .flags = 0,
@@ -1118,7 +1131,7 @@ void InitializeState(int windowWidth, int windowHeight)
             .height = static_cast<uint32_t>(windowHeight),
             .layers = 1,
         };
-        VK_CHECK(vkCreateFramebuffer(device, &framebufferCreate, nullptr, &framebuffers[i]));
+        VK_CHECK(vkCreateFramebuffer(device, &framebufferCreate, nullptr, &per_swapchainimage[i].framebuffer));
     }
 
     drawable->CreateDeviceData(physical_device, device, queue);
@@ -1281,6 +1294,7 @@ static void DrawFrame(GLFWwindow *window)
     glfwGetWindowSize(window, &windowWidth, &windowHeight);
 
     auto& submission = submissions[submission_index];
+    auto& sd = per_swapchainimage[swapchain_index];
 
     VK_CHECK(vkWaitForFences(device, 1, &submission.draw_completed_fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
     VK_CHECK(vkResetFences(device, 1, &submission.draw_completed_fence));
@@ -1290,9 +1304,7 @@ static void DrawFrame(GLFWwindow *window)
 
     mat4f modelview = manip.m_matrix;
     mat4f modelview_3x3 = modelview;
-    modelview_3x3.m_v[12] = 0.0f;
-    modelview_3x3.m_v[13] = 0.0f;
-    modelview_3x3.m_v[14] = 0.0f;
+    modelview_3x3.m_v[12] = 0.0f; modelview_3x3.m_v[13] = 0.0f; modelview_3x3.m_v[14] = 0.0f;
     mat4f modelview_normal = inverse(transpose(modelview_3x3));
 
     float nearClip = .1f; // XXX - gSceneManip->m_translation[2] - gSceneManip->m_reference_size;
@@ -1308,7 +1320,7 @@ static void DrawFrame(GLFWwindow *window)
     memcpy(ubo + sizeof(mat4f) * 1, modelview_normal.m_v, sizeof(mat4f));
     memcpy(ubo + sizeof(mat4f) * 2, projection.m_v, sizeof(mat4f));
 
-    VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, image_acquired_semaphores[swapchainIndex], VK_NULL_HANDLE, &swapchainIndex));
+    VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, sd.image_acquired_semaphore, VK_NULL_HANDLE, &swapchain_index));
 
     auto cb = submission.command_buffer;
 
@@ -1328,7 +1340,7 @@ static void DrawFrame(GLFWwindow *window)
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
         .pNext = nullptr,
         .renderPass = renderPass,
-        .framebuffer = framebuffers[swapchainIndex],
+        .framebuffer = sd.framebuffer,
         .renderArea = {{0, 0}, {static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight)}},
         .clearValueCount = static_cast<uint32_t>(std::size(clearValues)),
         .pClearValues = clearValues,
@@ -1342,7 +1354,7 @@ static void DrawFrame(GLFWwindow *window)
 
     // 8. Bind the texture resources - NA
 
-    // 7. Bind the vertex and swapchainIndex buffers
+    // 7. Bind the vertex and swapchain_index buffers
     drawable->BindForDraw(device, cb);
 
     // 9. Set viewport and scissor parameters
@@ -1363,7 +1375,7 @@ static void DrawFrame(GLFWwindow *window)
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .pNext = nullptr,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &image_acquired_semaphores[swapchainIndex],
+        .pWaitSemaphores = &sd.image_acquired_semaphore,
         .pWaitDstStageMask = &waitdststagemask,
         .commandBufferCount = 1,
         .pCommandBuffers = &cb,
@@ -1380,12 +1392,12 @@ static void DrawFrame(GLFWwindow *window)
         .pWaitSemaphores = &submission.draw_completed_semaphore,
         .swapchainCount = 1,
         .pSwapchains = &swapchain,
-        .pImageIndices = &swapchainIndex,
+        .pImageIndices = &swapchain_index,
         .pResults = nullptr,
     };
     VK_CHECK(vkQueuePresentKHR(queue, &present));
 
-    swapchainIndex = (swapchainIndex + 1) % swapchain_image_count;
+    swapchain_index = (swapchain_index + 1) % swapchain_image_count;
     submission_index = (submission_index + 1) % submissions.size();
 }
 
@@ -1481,7 +1493,6 @@ static void ScrollCallback(GLFWwindow *window, double dx, double dy)
     glfwGetFramebufferSize(window, &width, &height);
     manip.move(static_cast<float>(dx / width), static_cast<float>(dy / height));
 }
-
 
 bool ParseTriSrc(FILE *fp, std::vector<Vertex>& vertices, std::vector<uint32_t>& indices)
 {
