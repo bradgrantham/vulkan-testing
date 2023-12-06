@@ -659,6 +659,16 @@ struct Drawable
     }
 };
 
+std::vector<VkImage> GetSwapchainImages(VkDevice device, VkSwapchainKHR swapchain)
+{
+    uint32_t swapchain_image_count;
+    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchain_image_count, nullptr));
+    std::vector<VkImage> swapchain_images(swapchain_image_count);
+    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchain_image_count, swapchain_images.data()));
+    return swapchain_images;
+}
+
+
 namespace VulkanApp
 {
 
@@ -819,15 +829,6 @@ void CreatePerSubmissionData()
     }
 }
 
-std::vector<VkImage> GetSwapchainImages(VkDevice device, VkSwapchainKHR swapchain) 
-{
-    uint32_t swapchain_image_count;
-    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchain_image_count, nullptr));
-    std::vector<VkImage> swapchain_images(swapchain_image_count);
-    VK_CHECK(vkGetSwapchainImagesKHR(device, swapchain, &swapchain_image_count, swapchain_images.data()));
-    return swapchain_images;
-}
-
 void InitializeState(int windowWidth, int windowHeight)
 {
     // non-frame stuff
@@ -913,7 +914,7 @@ void InitializeState(int windowWidth, int windowHeight)
 // frame-related stuff - swapchains indices, fences, semaphores
     auto swapchain_images = GetSwapchainImages(device, swapchain);
     assert(swapchain_image_count == swapchain_images.size());
-    swapchain_image_count = swapchain_images.size();
+    swapchain_image_count = static_cast<uint32_t>(swapchain_images.size());
 
     per_swapchainimage.resize(swapchain_image_count);
     for(uint32_t i = 0; i < swapchain_image_count; i++) {
