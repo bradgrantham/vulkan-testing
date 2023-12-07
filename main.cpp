@@ -187,13 +187,55 @@ struct Buffer
     VkDeviceMemory mem { VK_NULL_HANDLE };
     VkBuffer buf { VK_NULL_HANDLE };
     void* mapped { nullptr };
+
+    void Create(VkPhysicalDevice physical_device, VkDevice device, size_t size, VkBufferUsageFlags usage_flags, VkMemoryPropertyFlags properties)
+    {
+        assert(mem == VK_NULL_HANDLE);
+
+        VkBufferCreateInfo create_buffer {
+            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+            .pNext = nullptr,
+            .size = size,
+            .usage = usage_flags,
+        };
+
+        VK_CHECK(vkCreateBuffer(device, &create_buffer, nullptr, &buf));
+
+        VkMemoryRequirements memory_req;
+        vkGetBufferMemoryRequirements(device, buf, &memory_req);
+
+        VkPhysicalDeviceMemoryProperties memory_properties;
+        vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+
+        uint32_t memoryTypeIndex = getMemoryTypeIndex(memory_properties, memory_req.memoryTypeBits, properties);
+        VkMemoryAllocateInfo memory_alloc {
+            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+            .pNext = nullptr,
+            .allocationSize = memory_req.size,
+            .memoryTypeIndex = memoryTypeIndex,
+        };
+        VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &mem));
+        VK_CHECK(vkBindBufferMemory(device, buf, mem, 0));
+    }
+
+    void Release()
+    {
+    }
 };
 
 struct VertexUniforms
 {
-    float modelview[16];
-    float modelview_normal[16];
-    float projection[16];
+    mat4f modelview;
+    mat4f modelview_normal;
+    mat4f projection;
+};
+
+struct FragmentUniforms
+{
+    vec3 light_position;
+    float pad;
+    vec3 light_color;
+    float pad2;
 };
 
 void CreateInstance(VkInstance* instance, bool enableValidation)
@@ -693,7 +735,8 @@ struct Submission {
     VkFence draw_completed_fence;
     VkSemaphore draw_completed_semaphore;
     VkDescriptorSet descriptor_set;
-    Buffer uniform_buffer;
+    Buffer vertex_uniforms_buffer;
+    Buffer fragment_uniforms_buffer;
 };
 static constexpr int SUBMISSIONS_IN_FLIGHT = 2;
 std::vector<Submission> submissions(SUBMISSIONS_IN_FLIGHT);
@@ -780,40 +823,13 @@ void CreatePerSubmissionData()
         };
         VK_CHECK(vkAllocateDescriptorSets(device, &allocate_descriptor_set, &submission.descriptor_set));
 
-        VkBufferCreateInfo create_buffer {
-            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .pNext = nullptr,
-            .size = sizeof(VertexUniforms),
-            .usage = VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT,
-        };
+        auto& vertex_uniforms_buffer = submission.vertex_uniforms_buffer;
 
-        auto& ubo = submission.uniform_buffer;
+        submission.vertex_uniforms_buffer.Create(physical_device, device, sizeof(VertexUniforms), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VK_CHECK(vkMapMemory(device, vertex_uniforms_buffer.mem, 0, sizeof(VertexUniforms), 0, &vertex_uniforms_buffer.mapped));
 
-        VK_CHECK(vkCreateBuffer(device, &create_buffer, nullptr, &ubo.buf));
-
-        VkMemoryRequirements memory_req;
-        vkGetBufferMemoryRequirements(device, ubo.buf, &memory_req);
-
-        VkPhysicalDeviceMemoryProperties memory_properties;
-        vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
-
-        uint32_t memoryTypeIndex = getMemoryTypeIndex(memory_properties, memory_req.memoryTypeBits, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        VkMemoryAllocateInfo memory_alloc {
-            .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-            .pNext = nullptr,
-            .allocationSize = memory_req.size,
-            .memoryTypeIndex = memoryTypeIndex,
-        };
-        VK_CHECK(vkAllocateMemory(device, &memory_alloc, nullptr, &ubo.mem));
-        VK_CHECK(vkBindBufferMemory(device, ubo.buf, ubo.mem, 0));
-        VK_CHECK(vkMapMemory(device, ubo.mem, 0, sizeof(VertexUniforms), 0, &ubo.mapped));
-
-        VkDescriptorBufferInfo buffer_info {
-            .buffer = submission.uniform_buffer.buf,
-            .range = sizeof(VertexUniforms),
-        };
-
-        VkWriteDescriptorSet write_descriptor_set {
+        VkDescriptorBufferInfo vertex_uniforms_buffer_info { submission.vertex_uniforms_buffer.buf, 0, sizeof(VertexUniforms) };
+        VkWriteDescriptorSet write_vubo_descriptor_set {
             .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
             .pNext = nullptr,
             .dstSet = submission.descriptor_set,
@@ -822,10 +838,30 @@ void CreatePerSubmissionData()
             .descriptorCount = 1,
             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
             .pImageInfo = nullptr,
-            .pBufferInfo = &buffer_info,
+            .pBufferInfo = &vertex_uniforms_buffer_info,
             .pTexelBufferView = nullptr,
         };
-        vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, nullptr);
+        vkUpdateDescriptorSets(device, 1, &write_vubo_descriptor_set, 0, nullptr);
+
+        auto& fragment_uniforms_buffer = submission.fragment_uniforms_buffer;
+
+        submission.fragment_uniforms_buffer.Create(physical_device, device, sizeof(FragmentUniforms), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VK_CHECK(vkMapMemory(device, fragment_uniforms_buffer.mem, 0, sizeof(FragmentUniforms), 0, &fragment_uniforms_buffer.mapped));
+
+        VkDescriptorBufferInfo fragment_uniforms_buffer_info { submission.fragment_uniforms_buffer.buf, 0, sizeof(FragmentUniforms) };
+        VkWriteDescriptorSet write_fubo_descriptor_set {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .pNext = nullptr,
+            .dstSet = submission.descriptor_set,
+            .dstBinding = 1,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .pImageInfo = nullptr,
+            .pBufferInfo = &fragment_uniforms_buffer_info,
+            .pTexelBufferView = nullptr,
+        };
+        vkUpdateDescriptorSets(device, 1, &write_fubo_descriptor_set, 0, nullptr);
     }
 }
 
@@ -912,6 +948,7 @@ void InitializeState(int windowWidth, int windowHeight)
     VK_CHECK(vkCreateSwapchainKHR(device, &create, nullptr, &swapchain));
 
 // frame-related stuff - swapchains indices, fences, semaphores
+
     auto swapchain_images = GetSwapchainImages(device, swapchain);
     assert(swapchain_image_count == swapchain_images.size());
     swapchain_image_count = static_cast<uint32_t>(swapchain_images.size());
@@ -953,7 +990,23 @@ void InitializeState(int windowWidth, int windowHeight)
         VK_CHECK(vkCreateImageView(device, &colorImageViewCreate, nullptr, &colorImageViews[i]));
     }
 
-    VkDescriptorPoolSize pool_sizes = { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, SUBMISSIONS_IN_FLIGHT };
+    VkDescriptorSetLayoutBinding vertex_ub_binding {
+        .binding = 0,
+        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = 1,
+        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
+        .pImmutableSamplers = nullptr,
+    };
+    VkDescriptorSetLayoutBinding fragment_ub_binding {
+        .binding = 1,
+        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = 1,
+        .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
+        .pImmutableSamplers = nullptr,
+    };
+    std::vector<VkDescriptorSetLayoutBinding> layout_bindings = {vertex_ub_binding, fragment_ub_binding};
+
+    VkDescriptorPoolSize pool_sizes = { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(layout_bindings.size()) * SUBMISSIONS_IN_FLIGHT };
     VkDescriptorPoolCreateInfo create_descriptor_pool {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .pNext = nullptr,
@@ -964,20 +1017,12 @@ void InitializeState(int windowWidth, int windowHeight)
     };
     VK_CHECK(vkCreateDescriptorPool(device, &create_descriptor_pool, nullptr, &descriptor_pool));
 
-    VkDescriptorSetLayoutBinding vertex_ub_binding {
-        .binding = 0,
-        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .descriptorCount = 1,
-        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-        .pImmutableSamplers = nullptr,
-    };
-
     VkDescriptorSetLayoutCreateInfo descriptor_set_layout_create {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
         .pNext = nullptr,
         .flags = 0,
-        .bindingCount = 1,
-        .pBindings = &vertex_ub_binding,
+        .bindingCount = static_cast<uint32_t>(layout_bindings.size()),
+        .pBindings = layout_bindings.data(),
     };
     VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptor_set_layout_create, nullptr, &descriptor_set_layout));
 
@@ -1314,10 +1359,17 @@ static void DrawFrame(GLFWwindow *window)
     float frustumLeft = -frustumRight;
     mat4f projection = mat4f::frustum(frustumLeft, frustumRight, frustumTop, frustumBottom, nearClip, farClip);
 
-    uint8_t *ubo = static_cast<uint8_t*>(submission.uniform_buffer.mapped);
-    memcpy(ubo + sizeof(mat4f) * 0, modelview.m_v, sizeof(mat4f));
-    memcpy(ubo + sizeof(mat4f) * 1, modelview_normal.m_v, sizeof(mat4f));
-    memcpy(ubo + sizeof(mat4f) * 2, projection.m_v, sizeof(mat4f));
+    VertexUniforms* vertex_uniforms = static_cast<VertexUniforms*>(submission.vertex_uniforms_buffer.mapped);
+    vertex_uniforms->modelview = modelview;
+    vertex_uniforms->modelview_normal = modelview_normal;
+    vertex_uniforms->projection = projection.m_v;
+
+    vec3 light_position{1000, 1000, 1000};
+    vec3 light_color{1, 1, 1};
+
+    FragmentUniforms* fragment_uniforms = static_cast<FragmentUniforms*>(submission.fragment_uniforms_buffer.mapped);
+    fragment_uniforms->light_position = light_position;
+    fragment_uniforms->light_color = light_color;
 
     VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, sd.image_acquired_semaphore, VK_NULL_HANDLE, &swapchain_index));
 
@@ -1353,7 +1405,7 @@ static void DrawFrame(GLFWwindow *window)
 
     // 8. Bind the texture resources - NA
 
-    // 7. Bind the vertex and swapchain_index buffers
+    // 7. Bind the vertex and index buffers
     drawable->BindForDraw(device, cb);
 
     // 9. Set viewport and scissor parameters
