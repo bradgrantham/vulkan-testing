@@ -1,6 +1,5 @@
 cleanup
     better shader
-        parameterize lighting into shader
         allow manipulating the light - need to separate objectManip and lightManip
         shininess
         object colors
