@@ -760,7 +760,9 @@ VkDescriptorSetLayout descriptor_set_layout;
 
 // interaction data
 
-static manipulator manip;
+manipulator ObjectManip;
+manipulator LightManip;
+manipulator* CurrentManip;
 int buttonPressed = -1;
 bool motionReported = true;
 double oldMouseX;
@@ -1346,7 +1348,7 @@ static void DrawFrame(GLFWwindow *window)
     [[maybe_unused]] static float frame = 0.0;
     frame += 1;
 
-    mat4f modelview = manip.m_matrix;
+    mat4f modelview = ObjectManip.m_matrix;
     mat4f modelview_3x3 = modelview;
     modelview_3x3.m_v[12] = 0.0f; modelview_3x3.m_v[13] = 0.0f; modelview_3x3.m_v[14] = 0.0f;
     mat4f modelview_normal = inverse(transpose(modelview_3x3));
@@ -1364,11 +1366,18 @@ static void DrawFrame(GLFWwindow *window)
     vertex_uniforms->modelview_normal = modelview_normal;
     vertex_uniforms->projection = projection.m_v;
 
-    vec3 light_position{1000, 1000, 1000};
+    vec4 light_position{1000, 1000, 1000, 0};
     vec3 light_color{1, 1, 1};
 
+    // mat4f light_transform_3x3 = LightManip.m_matrix;
+    // light_transform_3x3.m_v[12] = 0.0f; light_transform_3x3.m_v[13] = 0.0f; light_transform_3x3.m_v[14] = 0.0f;
+
+    light_position = light_position * LightManip.m_matrix; // light_transform_3x3;
+
     FragmentUniforms* fragment_uniforms = static_cast<FragmentUniforms*>(submission.fragment_uniforms_buffer.mapped);
-    fragment_uniforms->light_position = light_position;
+    fragment_uniforms->light_position[0] = light_position[0];
+    fragment_uniforms->light_position[1] = light_position[1];
+    fragment_uniforms->light_position[2] = light_position[2];
     fragment_uniforms->light_color = light_color;
 
     VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, sd.image_acquired_semaphore, VK_NULL_HANDLE, &swapchain_index));
@@ -1469,19 +1478,28 @@ static void KeyCallback(GLFWwindow *window, int key, [[maybe_unused]] int scanco
                 break;
 
             case 'R':
-                manip.m_mode = manipulator::ROTATE;
+                CurrentManip = &ObjectManip;
+                ObjectManip.m_mode = manipulator::ROTATE;
                 break;
 
             case 'O':
-                manip.m_mode = manipulator::ROLL;
+                CurrentManip = &ObjectManip;
+                ObjectManip.m_mode = manipulator::ROLL;
                 break;
 
             case 'X':
-                manip.m_mode = manipulator::SCROLL;
+                CurrentManip = &ObjectManip;
+                ObjectManip.m_mode = manipulator::SCROLL;
                 break;
 
             case 'Z':
-                manip.m_mode = manipulator::DOLLY;
+                CurrentManip = &ObjectManip;
+                ObjectManip.m_mode = manipulator::DOLLY;
+                break;
+
+            case 'L':
+                CurrentManip = &LightManip;
+                LightManip.m_mode = manipulator::ROTATE;
                 break;
 
             case 'Q': case GLFW_KEY_ESCAPE: case '\033':
@@ -1532,7 +1550,7 @@ static void MotionCallback(GLFWwindow *window, double x, double y)
     glfwGetFramebufferSize(window, &width, &height);
 
     if(buttonPressed == 1) {
-        manip.move(static_cast<float>(dx / width), static_cast<float>(dy / height));
+        CurrentManip->move(static_cast<float>(dx / width), static_cast<float>(dy / height));
     }
 }
 
@@ -1542,7 +1560,7 @@ static void ScrollCallback(GLFWwindow *window, double dx, double dy)
 
     int width, height;
     glfwGetFramebufferSize(window, &width, &height);
-    manip.move(static_cast<float>(dx / width), static_cast<float>(dy / height));
+    CurrentManip->move(static_cast<float>(dx / width), static_cast<float>(dy / height));
 }
 
 bool ParseTriSrc(FILE *fp, std::vector<Vertex>& vertices, std::vector<uint32_t>& indices)
@@ -1617,7 +1635,9 @@ void LoadModel(const char *filename)
     float dim = length(drawable->bounds.dim());
     object_scale = vec3(.5f / dim, .5f / dim, .5f / dim);
 
-    manip = manipulator(drawable->bounds, fov / 180.0f * 3.14159f / 2);
+    ObjectManip = manipulator(drawable->bounds, fov / 180.0f * 3.14159f / 2);
+    LightManip = manipulator(aabox(), fov / 180.0f * 3.14159f / 2);
+    CurrentManip = &ObjectManip;
 
     fclose(fp);
 }

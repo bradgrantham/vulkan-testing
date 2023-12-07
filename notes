@@ -1,6 +1,5 @@
 cleanup
     better shader
-        allow manipulating the light - need to separate objectManip and lightManip
         shininess
         object colors
     try a second objct
