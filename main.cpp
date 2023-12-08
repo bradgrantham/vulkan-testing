@@ -223,6 +223,12 @@ struct Buffer
     }
 };
 
+struct ShadingUniforms
+{
+    vec3 specular_color;
+    float shininess;
+};
+
 struct VertexUniforms
 {
     mat4f modelview;
@@ -652,17 +658,26 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
 
 struct Drawable
 {
+    struct Attributes
+    {
+        char texture_name[512];
+        char tag_name[512];
+        float specular_color[4];
+        float shininess;
+    };
+
     aabox bounds;
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+    Attributes attr;
     int triangleCount;
     constexpr static int VERTEX_BUFFER = 0;
     constexpr static int INDEX_BUFFER = 1;
     typedef std::array<Buffer, 2> DrawableBuffersOnDevice;
     std::map<VkDevice, DrawableBuffersOnDevice> buffers_by_device;
 
-    Drawable(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices) :
-        vertices(vertices), indices(indices)
+    Drawable(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, const Attributes& attr) :
+        vertices(vertices), indices(indices), attr(attr)
     {
         triangleCount = static_cast<int>(indices.size() / 3);
         for(uint32_t i = 0; i < vertices.size(); i++) {
@@ -737,6 +752,7 @@ struct Submission {
     VkDescriptorSet descriptor_set;
     Buffer vertex_uniforms_buffer;
     Buffer fragment_uniforms_buffer;
+    Buffer shading_uniforms_buffer;
 };
 static constexpr int SUBMISSIONS_IN_FLIGHT = 2;
 std::vector<Submission> submissions(SUBMISSIONS_IN_FLIGHT);
@@ -825,6 +841,7 @@ void CreatePerSubmissionData()
         };
         VK_CHECK(vkAllocateDescriptorSets(device, &allocate_descriptor_set, &submission.descriptor_set));
 
+        // Uniforms and Descriptor Set and DS Writes for Uniforms applied to all vertex shaders...?
         auto& vertex_uniforms_buffer = submission.vertex_uniforms_buffer;
 
         submission.vertex_uniforms_buffer.Create(physical_device, device, sizeof(VertexUniforms), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -845,6 +862,7 @@ void CreatePerSubmissionData()
         };
         vkUpdateDescriptorSets(device, 1, &write_vubo_descriptor_set, 0, nullptr);
 
+        // Uniforms and Descriptor Set and DS Writes for Uniforms applied to all fragment shaders...?
         auto& fragment_uniforms_buffer = submission.fragment_uniforms_buffer;
 
         submission.fragment_uniforms_buffer.Create(physical_device, device, sizeof(FragmentUniforms), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -864,6 +882,28 @@ void CreatePerSubmissionData()
             .pTexelBufferView = nullptr,
         };
         vkUpdateDescriptorSets(device, 1, &write_fubo_descriptor_set, 0, nullptr);
+
+        // Uniforms and Descriptor Set and DS Writes for uniforms applied as material parameters
+        auto& shading_uniforms_buffer = submission.shading_uniforms_buffer;
+
+        submission.shading_uniforms_buffer.Create(physical_device, device, sizeof(VertexUniforms), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VK_CHECK(vkMapMemory(device, shading_uniforms_buffer.mem, 0, sizeof(VertexUniforms), 0, &shading_uniforms_buffer.mapped));
+
+        VkDescriptorBufferInfo shading_uniforms_buffer_info { submission.shading_uniforms_buffer.buf, 0, sizeof(ShadingUniforms) };
+        VkWriteDescriptorSet write_subo_descriptor_set {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .pNext = nullptr,
+            .dstSet = submission.descriptor_set,
+            .dstBinding = 2,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .pImageInfo = nullptr,
+            .pBufferInfo = &shading_uniforms_buffer_info,
+            .pTexelBufferView = nullptr,
+        };
+        vkUpdateDescriptorSets(device, 1, &write_subo_descriptor_set, 0, nullptr);
+
     }
 }
 
@@ -1006,7 +1046,14 @@ void InitializeState(int windowWidth, int windowHeight)
         .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
         .pImmutableSamplers = nullptr,
     };
-    std::vector<VkDescriptorSetLayoutBinding> layout_bindings = {vertex_ub_binding, fragment_ub_binding};
+    VkDescriptorSetLayoutBinding shading_ub_binding {
+        .binding = 2,
+        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+        .descriptorCount = 1,
+        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
+        .pImmutableSamplers = nullptr,
+    };
+    std::vector<VkDescriptorSetLayoutBinding> layout_bindings = {vertex_ub_binding, fragment_ub_binding, shading_ub_binding};
 
     VkDescriptorPoolSize pool_sizes = { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(layout_bindings.size()) * SUBMISSIONS_IN_FLIGHT };
     VkDescriptorPoolCreateInfo create_descriptor_pool {
@@ -1380,6 +1427,10 @@ static void DrawFrame(GLFWwindow *window)
     fragment_uniforms->light_position[2] = light_position[2];
     fragment_uniforms->light_color = light_color;
 
+    ShadingUniforms* shading_uniforms = static_cast<ShadingUniforms*>(submission.shading_uniforms_buffer.mapped);
+    shading_uniforms->specular_color.set(drawable->attr.specular_color); // XXX drops specular_color[3]
+    shading_uniforms->shininess = drawable->attr.shininess;
+
     VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, sd.image_acquired_semaphore, VK_NULL_HANDLE, &swapchain_index));
 
     auto cb = submission.command_buffer;
@@ -1563,31 +1614,27 @@ static void ScrollCallback(GLFWwindow *window, double dx, double dy)
     CurrentManip->move(static_cast<float>(dx / width), static_cast<float>(dy / height));
 }
 
-bool ParseTriSrc(FILE *fp, std::vector<Vertex>& vertices, std::vector<uint32_t>& indices)
+bool ParseTriSrc(FILE *fp, std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, Drawable::Attributes &object)
 {
-    char texture_name[512];
-    char tag_name[512];
-    float specular_color[4];
-    float shininess;
+    while(fscanf(fp,"\"%[^\"]\"", object.texture_name) == 1) {
+        if(strcmp(object.texture_name, "*") == 0) {
+            object.texture_name[0] = '\0';
+        }
 
-    while(fscanf(fp,"\"%[^\"]\"", texture_name) == 1) {
-        if(strcmp(texture_name, "*") == 0)
-            texture_name[0] = '\0';
-
-	if(fscanf(fp,"%s ", tag_name) != 1) {
+	if(fscanf(fp,"%s ", object.tag_name) != 1) {
 	    fprintf(stderr, "couldn't read tag name\n");
 	    return false;
 	}
 
-	if(fscanf(fp,"%g %g %g %g %g ", &specular_color[0], &specular_color[1],
-	    &specular_color[2], &specular_color[3], &shininess) != 5) {
+	if(fscanf(fp,"%g %g %g %g %g ", &object.specular_color[0], &object.specular_color[1],
+	    &object.specular_color[2], &object.specular_color[3], &object.shininess) != 5) {
 	    fprintf(stderr, "couldn't read specular properties\n");
 	    return false;
 	}
 
-	if(shininess > 0 && shininess < 1) {
-	    // shininess is not exponent - what is it?
-	    shininess *= 10;
+	if(object.shininess > 0 && object.shininess < 1) {
+	    // XXX I forgot what shininess units are!
+	    object.shininess *= 10;
 	}
 
         for(int i = 0; i < 3; i++) {
@@ -1628,8 +1675,9 @@ void LoadModel(const char *filename)
 
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
-    ParseTriSrc(fp, vertices, indices);
-    drawable = std::make_unique<Drawable>(vertices, indices);
+    Drawable::Attributes object;
+    ParseTriSrc(fp, vertices, indices, object);
+    drawable = std::make_unique<Drawable>(vertices, indices, object);
 
     object_translation = drawable->bounds.center() * -1;
     float dim = length(drawable->bounds.dim());

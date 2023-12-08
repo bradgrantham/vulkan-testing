@@ -1,7 +1,4 @@
 cleanup
-    better shader
-        shininess
-        object colors
     try a second objct
     why shouldn't there be SUBMISSIONS_IN_FLIGHT count depth images?
     handle window resize - wait, destroy, recreate per-swapchain data
