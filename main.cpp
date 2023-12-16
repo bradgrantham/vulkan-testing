@@ -223,6 +223,19 @@ struct Buffer
     }
 };
 
+struct UniformBuffer
+{
+    uint32_t binding;
+    VkShaderStageFlags stageFlags;
+    size_t size;
+
+    UniformBuffer(int binding, VkShaderStageFlags stageFlags, size_t size) :
+        binding(binding),
+        stageFlags(stageFlags),
+        size(size)
+    {}
+};
+
 struct ShadingUniforms
 {
     vec3 specular_color;
@@ -742,6 +755,7 @@ VkSurfaceKHR surface;
 VkSwapchainKHR swapchain;
 VkCommandPool command_pool;
 VkQueue queue;
+std::vector<UniformBuffer> uniforms;
 
 // In flight rendering stuff
 int submission_index = 0;
@@ -750,9 +764,7 @@ struct Submission {
     VkFence draw_completed_fence;
     VkSemaphore draw_completed_semaphore;
     VkDescriptorSet descriptor_set;
-    Buffer vertex_uniforms_buffer;
-    Buffer fragment_uniforms_buffer;
-    Buffer shading_uniforms_buffer;
+    Buffer uniform_buffers[3];
 };
 static constexpr int SUBMISSIONS_IN_FLIGHT = 2;
 std::vector<Submission> submissions(SUBMISSIONS_IN_FLIGHT);
@@ -841,69 +853,30 @@ void CreatePerSubmissionData()
         };
         VK_CHECK(vkAllocateDescriptorSets(device, &allocate_descriptor_set, &submission.descriptor_set));
 
-        // Uniforms and Descriptor Set and DS Writes for Uniforms applied to all vertex shaders...?
-        auto& vertex_uniforms_buffer = submission.vertex_uniforms_buffer;
+        int which = 0;
+        for(const auto& uniform: uniforms) {
+            auto &uniform_buffer = submission.uniform_buffers[which];
 
-        submission.vertex_uniforms_buffer.Create(physical_device, device, sizeof(VertexUniforms), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        VK_CHECK(vkMapMemory(device, vertex_uniforms_buffer.mem, 0, sizeof(VertexUniforms), 0, &vertex_uniforms_buffer.mapped));
+            uniform_buffer.Create(physical_device, device, uniform.size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            VK_CHECK(vkMapMemory(device, uniform_buffer.mem, 0, uniform.size, 0, &uniform_buffer.mapped));
 
-        VkDescriptorBufferInfo vertex_uniforms_buffer_info { submission.vertex_uniforms_buffer.buf, 0, sizeof(VertexUniforms) };
-        VkWriteDescriptorSet write_vubo_descriptor_set {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .pNext = nullptr,
-            .dstSet = submission.descriptor_set,
-            .dstBinding = 0,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .pImageInfo = nullptr,
-            .pBufferInfo = &vertex_uniforms_buffer_info,
-            .pTexelBufferView = nullptr,
-        };
-        vkUpdateDescriptorSets(device, 1, &write_vubo_descriptor_set, 0, nullptr);
+            VkDescriptorBufferInfo buffer_info { uniform_buffer.buf, 0, uniform.size };
+            VkWriteDescriptorSet write_descriptor_set {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .pNext = nullptr,
+                .dstSet = submission.descriptor_set,
+                .dstBinding = uniform.binding,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .pImageInfo = nullptr,
+                .pBufferInfo = &buffer_info,
+                .pTexelBufferView = nullptr,
+            };
+            vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, nullptr);
 
-        // Uniforms and Descriptor Set and DS Writes for Uniforms applied to all fragment shaders...?
-        auto& fragment_uniforms_buffer = submission.fragment_uniforms_buffer;
-
-        submission.fragment_uniforms_buffer.Create(physical_device, device, sizeof(FragmentUniforms), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        VK_CHECK(vkMapMemory(device, fragment_uniforms_buffer.mem, 0, sizeof(FragmentUniforms), 0, &fragment_uniforms_buffer.mapped));
-
-        VkDescriptorBufferInfo fragment_uniforms_buffer_info { submission.fragment_uniforms_buffer.buf, 0, sizeof(FragmentUniforms) };
-        VkWriteDescriptorSet write_fubo_descriptor_set {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .pNext = nullptr,
-            .dstSet = submission.descriptor_set,
-            .dstBinding = 1,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .pImageInfo = nullptr,
-            .pBufferInfo = &fragment_uniforms_buffer_info,
-            .pTexelBufferView = nullptr,
-        };
-        vkUpdateDescriptorSets(device, 1, &write_fubo_descriptor_set, 0, nullptr);
-
-        // Uniforms and Descriptor Set and DS Writes for uniforms applied as material parameters
-        auto& shading_uniforms_buffer = submission.shading_uniforms_buffer;
-
-        submission.shading_uniforms_buffer.Create(physical_device, device, sizeof(VertexUniforms), VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-        VK_CHECK(vkMapMemory(device, shading_uniforms_buffer.mem, 0, sizeof(VertexUniforms), 0, &shading_uniforms_buffer.mapped));
-
-        VkDescriptorBufferInfo shading_uniforms_buffer_info { submission.shading_uniforms_buffer.buf, 0, sizeof(ShadingUniforms) };
-        VkWriteDescriptorSet write_subo_descriptor_set {
-            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-            .pNext = nullptr,
-            .dstSet = submission.descriptor_set,
-            .dstBinding = 2,
-            .dstArrayElement = 0,
-            .descriptorCount = 1,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-            .pImageInfo = nullptr,
-            .pBufferInfo = &shading_uniforms_buffer_info,
-            .pTexelBufferView = nullptr,
-        };
-        vkUpdateDescriptorSets(device, 1, &write_subo_descriptor_set, 0, nullptr);
-
+            which++;
+        }
     }
 }
 
@@ -1032,28 +1005,27 @@ void InitializeState(int windowWidth, int windowHeight)
         VK_CHECK(vkCreateImageView(device, &colorImageViewCreate, nullptr, &colorImageViews[i]));
     }
 
-    VkDescriptorSetLayoutBinding vertex_ub_binding {
-        .binding = 0,
-        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .descriptorCount = 1,
-        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT,
-        .pImmutableSamplers = nullptr,
-    };
-    VkDescriptorSetLayoutBinding fragment_ub_binding {
-        .binding = 1,
-        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .descriptorCount = 1,
-        .stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT,
-        .pImmutableSamplers = nullptr,
-    };
-    VkDescriptorSetLayoutBinding shading_ub_binding {
-        .binding = 2,
-        .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-        .descriptorCount = 1,
-        .stageFlags = VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT,
-        .pImmutableSamplers = nullptr,
-    };
-    std::vector<VkDescriptorSetLayoutBinding> layout_bindings = {vertex_ub_binding, fragment_ub_binding, shading_ub_binding};
+    // Should probe these from shader code somehow
+    UniformBuffer vertex_ub{0, VK_SHADER_STAGE_VERTEX_BIT, sizeof(VertexUniforms)};
+    UniformBuffer fragment_ub{1, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(FragmentUniforms)};
+    UniformBuffer shading_ub{2, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(ShadingUniforms)};
+
+    // XXX at the moment this order is assumed for "struct submission" uniforms Buffer structs
+    uniforms.push_back(vertex_ub);
+    uniforms.push_back(fragment_ub);
+    uniforms.push_back(shading_ub);
+
+    std::vector<VkDescriptorSetLayoutBinding> layout_bindings;
+    for(const auto& uniform: uniforms) {
+        VkDescriptorSetLayoutBinding binding {
+            .binding = uniform.binding,
+            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .descriptorCount = 1,
+            .stageFlags = uniform.stageFlags,
+            .pImmutableSamplers = nullptr,
+        };
+        layout_bindings.push_back(binding);
+    }
 
     VkDescriptorPoolSize pool_sizes = { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(layout_bindings.size()) * SUBMISSIONS_IN_FLIGHT };
     VkDescriptorPoolCreateInfo create_descriptor_pool {
@@ -1408,7 +1380,7 @@ static void DrawFrame(GLFWwindow *window)
     float frustumLeft = -frustumRight;
     mat4f projection = mat4f::frustum(frustumLeft, frustumRight, frustumTop, frustumBottom, nearClip, farClip);
 
-    VertexUniforms* vertex_uniforms = static_cast<VertexUniforms*>(submission.vertex_uniforms_buffer.mapped);
+    VertexUniforms* vertex_uniforms = static_cast<VertexUniforms*>(submission.uniform_buffers[0].mapped);
     vertex_uniforms->modelview = modelview;
     vertex_uniforms->modelview_normal = modelview_normal;
     vertex_uniforms->projection = projection.m_v;
@@ -1421,13 +1393,13 @@ static void DrawFrame(GLFWwindow *window)
 
     light_position = light_position * LightManip.m_matrix; // light_transform_3x3;
 
-    FragmentUniforms* fragment_uniforms = static_cast<FragmentUniforms*>(submission.fragment_uniforms_buffer.mapped);
+    FragmentUniforms* fragment_uniforms = static_cast<FragmentUniforms*>(submission.uniform_buffers[1].mapped);
     fragment_uniforms->light_position[0] = light_position[0];
     fragment_uniforms->light_position[1] = light_position[1];
     fragment_uniforms->light_position[2] = light_position[2];
     fragment_uniforms->light_color = light_color;
 
-    ShadingUniforms* shading_uniforms = static_cast<ShadingUniforms*>(submission.shading_uniforms_buffer.mapped);
+    ShadingUniforms* shading_uniforms = static_cast<ShadingUniforms*>(submission.uniform_buffers[2].mapped);
     shading_uniforms->specular_color.set(drawable->attr.specular_color); // XXX drops specular_color[3]
     shading_uniforms->shininess = drawable->attr.shininess;
 
