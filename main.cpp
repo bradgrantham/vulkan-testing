@@ -87,7 +87,6 @@ VkCommandPool GetCommandPool(VkDevice device, uint32_t queue)
     VkCommandPool command_pool;
     VkCommandPoolCreateInfo create_command_pool{
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        .pNext = nullptr,
         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
         .queueFamilyIndex = queue,
     };
@@ -99,9 +98,8 @@ VkCommandBuffer GetCommandBuffer(VkDevice device, VkCommandPool command_pool)
 {
     VkCommandBuffer cmdBuffer;
 
-    VkCommandBufferAllocateInfo cmdBufAllocateInfo = {
+    VkCommandBufferAllocateInfo cmdBufAllocateInfo {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-        .pNext = nullptr,
         .commandPool = command_pool,
         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
         .commandBufferCount = 1,
@@ -113,9 +111,8 @@ VkCommandBuffer GetCommandBuffer(VkDevice device, VkCommandPool command_pool)
 
 void BeginCommandBuffer(VkCommandBuffer cmdBuffer)
 {
-    VkCommandBufferBeginInfo cmdBufInfo = {
+    VkCommandBufferBeginInfo cmdBufInfo {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-        .pNext = nullptr,
         .flags = 0,
     };
     VK_CHECK(vkBeginCommandBuffer(cmdBuffer, &cmdBufInfo));
@@ -125,17 +122,15 @@ void FlushCommandBuffer(VkDevice device, VkQueue queue, VkCommandBuffer commandB
 {
     assert(commandBuffer != VK_NULL_HANDLE);
 
-    VkSubmitInfo submitInfo = {
+    VkSubmitInfo submitInfo {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .pNext = nullptr,
         .commandBufferCount = 1,
         .pCommandBuffers = &commandBuffer,
     };
 
     // Create fence to ensure that the command buffer has finished executing
-    VkFenceCreateInfo fenceCreateInfo = {
+    VkFenceCreateInfo fenceCreateInfo {
         .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-        .pNext = nullptr,
         .flags = 0,
     };
     VkFence fence;
@@ -194,7 +189,6 @@ struct Buffer
 
         VkBufferCreateInfo create_buffer {
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .pNext = nullptr,
             .size = size,
             .usage = usage_flags,
         };
@@ -210,7 +204,6 @@ struct Buffer
         uint32_t memoryTypeIndex = getMemoryTypeIndex(memory_properties, memory_req.memoryTypeBits, properties);
         VkMemoryAllocateInfo memory_alloc {
             .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-            .pNext = nullptr,
             .allocationSize = memory_req.size,
             .memoryTypeIndex = memoryTypeIndex,
         };
@@ -302,7 +295,6 @@ void CreateInstance(VkInstance* instance, bool enableValidation)
 
 	VkInstanceCreateInfo create {
             .sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO,
-            .pNext = nullptr,
 #if defined(PLATFORM_MACOS)
             .flags = VK_INSTANCE_CREATE_ENUMERATE_PORTABILITY_BIT_KHR,
 #endif
@@ -434,7 +426,6 @@ VkShaderModule CreateShaderModule(VkDevice device, const std::vector<uint32_t>& 
     VkShaderModule module;
     VkShaderModuleCreateInfo shader_create {
         .sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO,
-        .pNext = nullptr,
         .flags = 0,
         .codeSize = code.size() * sizeof(code[0]),
         .pCode = code.data(),
@@ -475,16 +466,14 @@ void CreateDevice(VkPhysicalDevice physical_device, const std::vector<const char
 
     VkDeviceQueueCreateInfo create_queues {
         .sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO,
-        .pNext = nullptr,
         .flags = 0,
         .queueFamilyIndex = queue_family,
         .queueCount = 1,
         .pQueuePriorities = &queue_priorities,
     };
 
-    VkDeviceCreateInfo create = {
+    VkDeviceCreateInfo create {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-        .pNext = nullptr,
         .flags = 0,
         .queueCreateInfoCount = 1,
         .pQueueCreateInfos = &create_queues,
@@ -547,7 +536,6 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
     // buffer
     VkBufferCreateInfo create_staging_buffer{
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .pNext = nullptr,
         .usage = VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
     };
 
@@ -566,7 +554,6 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
     // Allocate memory
     VkMemoryAllocateInfo memory_alloc {
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-        .pNext = nullptr,
         .allocationSize = memory_req.size,
         .memoryTypeIndex = memoryTypeIndex,
     };
@@ -604,9 +591,8 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
 
     // This buffer will be used as the source of a transfer to a
     // GPU-addressable buffer
-    VkBufferCreateInfo create_vertex_buffer = {
+    VkBufferCreateInfo create_vertex_buffer {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .pNext = nullptr,
         .usage = VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
     };
 
@@ -625,9 +611,8 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
 
     // This buffer will be used as the source of a transfer to a
     // GPU-addressable buffer
-    VkBufferCreateInfo create_index_buffer = {
+    VkBufferCreateInfo create_index_buffer {
         .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-        .pNext = nullptr,
         .usage = VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT,
     };
 
@@ -823,7 +808,6 @@ void CreatePerSubmissionData()
 
         const VkCommandBufferAllocateInfo allocate {
             .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-            .pNext = nullptr,
             .commandPool = command_pool,
             .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
             .commandBufferCount = 1,
@@ -832,21 +816,18 @@ void CreatePerSubmissionData()
 
         VkFenceCreateInfo fence_create {
             .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-            .pNext = NULL,
             .flags = VK_FENCE_CREATE_SIGNALED_BIT,
         };
         VK_CHECK(vkCreateFence(device, &fence_create, nullptr, &submission.draw_completed_fence));
 
         VkSemaphoreCreateInfo sema_create {
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-            .pNext = NULL,
             .flags = 0,
         };
         VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &submission.draw_completed_semaphore));
 
         VkDescriptorSetAllocateInfo allocate_descriptor_set {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-            .pNext = nullptr,
             .descriptorPool = descriptor_pool,
             .descriptorSetCount = 1,
             .pSetLayouts = &descriptor_set_layout,
@@ -863,7 +844,6 @@ void CreatePerSubmissionData()
             VkDescriptorBufferInfo buffer_info { uniform_buffer.buf, 0, uniform.size };
             VkWriteDescriptorSet write_descriptor_set {
                 .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .pNext = nullptr,
                 .dstSet = submission.descriptor_set,
                 .dstBinding = uniform.binding,
                 .dstArrayElement = 0,
@@ -922,9 +902,8 @@ void InitializeState(int windowWidth, int windowHeight)
     CreateDevice(physical_device, deviceExtensions, graphics_queue_family, &device);
     vkGetDeviceQueue(device, graphics_queue_family, 0, &queue);
 
-    VkCommandPoolCreateInfo create_command_pool{
+    VkCommandPoolCreateInfo create_command_pool {
         .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        .pNext = nullptr,
         .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
         .queueFamilyIndex = graphics_queue_family,
     };
@@ -943,7 +922,6 @@ void InitializeState(int windowWidth, int windowHeight)
 
     VkSwapchainCreateInfoKHR create {
         .sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
-        .pNext = nullptr,
         .surface = surface,
         .minImageCount = swapchain_image_count,
         .imageFormat = chosenFormat,
@@ -976,9 +954,8 @@ void InitializeState(int windowWidth, int windowHeight)
         // XXX create a timeline semaphore by chaining after a
         // VkSemaphoreTypeCreateInfo with VkSemaphoreTypeCreateInfo =
         // VK_SEMAPHORE_TYPE_TIMELINE
-        VkSemaphoreCreateInfo sema_create = {
+        VkSemaphoreCreateInfo sema_create {
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-            .pNext = NULL,
             .flags = 0,
         };
         VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &sd.image_acquired_semaphore));
@@ -986,9 +963,8 @@ void InitializeState(int windowWidth, int windowHeight)
 
     std::vector<VkImageView> colorImageViews(swapchain_image_count);
     for(uint32_t i = 0; i < colorImageViews.size(); i++) {
-        VkImageViewCreateInfo colorImageViewCreate{
+        VkImageViewCreateInfo colorImageViewCreate {
             .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .pNext = nullptr,
             .flags = 0,
             .image = per_swapchainimage[i].image,
             .viewType = VK_IMAGE_VIEW_TYPE_2D,
@@ -1027,10 +1003,9 @@ void InitializeState(int windowWidth, int windowHeight)
         layout_bindings.push_back(binding);
     }
 
-    VkDescriptorPoolSize pool_sizes = { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(layout_bindings.size()) * SUBMISSIONS_IN_FLIGHT };
+    VkDescriptorPoolSize pool_sizes { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(layout_bindings.size()) * SUBMISSIONS_IN_FLIGHT };
     VkDescriptorPoolCreateInfo create_descriptor_pool {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
-        .pNext = nullptr,
         .flags = 0,
         .maxSets = SUBMISSIONS_IN_FLIGHT,
         .poolSizeCount = 1,
@@ -1040,7 +1015,6 @@ void InitializeState(int windowWidth, int windowHeight)
 
     VkDescriptorSetLayoutCreateInfo descriptor_set_layout_create {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .pNext = nullptr,
         .flags = 0,
         .bindingCount = static_cast<uint32_t>(layout_bindings.size()),
         .pBindings = layout_bindings.data(),
@@ -1052,7 +1026,6 @@ void InitializeState(int windowWidth, int windowHeight)
     VkFormat depthFormat = VK_FORMAT_D32_SFLOAT_S8_UINT;
     VkImageCreateInfo createDepthInfo {
         .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-        .pNext = NULL,
         .flags = 0,
         .imageType = VK_IMAGE_TYPE_2D,
         .format = depthFormat,
@@ -1074,9 +1047,8 @@ void InitializeState(int windowWidth, int windowHeight)
 
     uint32_t memoryTypeIndex = getMemoryTypeIndex(memory_properties, imageMemReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
     VkDeviceMemory depthImageMemory;
-    VkMemoryAllocateInfo depthAllocate{
+    VkMemoryAllocateInfo depthAllocate {
         .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-        .pNext = nullptr,
         .allocationSize = imageMemReqs.size,
         .memoryTypeIndex = memoryTypeIndex,
     };
@@ -1085,9 +1057,8 @@ void InitializeState(int windowWidth, int windowHeight)
     // bind image to memory
 
     VkImageView depthImageView;
-    VkImageViewCreateInfo depthImageViewCreate{
+    VkImageViewCreateInfo depthImageViewCreate {
         .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .pNext = nullptr,
         .flags = 0,
         .image = depthImage,
         .viewType = VK_IMAGE_VIEW_TYPE_2D,
@@ -1127,7 +1098,7 @@ void InitializeState(int windowWidth, int windowHeight)
         .initialLayout = VK_IMAGE_LAYOUT_UNDEFINED,
         .finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL,
     };
-    VkAttachmentDescription attachments[2] = { color_attachment_description, depth_attachment_description };
+    VkAttachmentDescription attachments[] = { color_attachment_description, depth_attachment_description };
 
     VkAttachmentReference colorReference { 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
     VkAttachmentReference depthReference { 1, VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL };
@@ -1165,32 +1136,30 @@ void InitializeState(int windowWidth, int windowHeight)
         .dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT,
         .dependencyFlags = 0,
     };
-    VkSubpassDependency attachment_dependencies[2] {
+    VkSubpassDependency attachment_dependencies[] = {
         depth_attachment_dependency,
         color_attachment_dependency,
     };
 
     VkRenderPassCreateInfo render_pass_create {
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-        .pNext = nullptr,
         .flags = 0,
-        .attachmentCount = 2,
+        .attachmentCount = std::size(attachments),
         .pAttachments = attachments,
         .subpassCount = 1,
         .pSubpasses = &subpass,
-        .dependencyCount = 2,
+        .dependencyCount = std::size(attachment_dependencies),
         .pDependencies = attachment_dependencies,
     };
     VK_CHECK(vkCreateRenderPass(device, &render_pass_create, nullptr, &renderPass));
 
     for(uint32_t i = 0; i < swapchain_image_count; i++) {
-        VkImageView imageviews[2] = {colorImageViews[i], depthImageView};
+        VkImageView imageviews[] = {colorImageViews[i], depthImageView};
         VkFramebufferCreateInfo framebufferCreate {
             .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
-            .pNext = nullptr,
             .flags = 0,
             .renderPass = renderPass,
-            .attachmentCount = 2,
+            .attachmentCount = std::size(imageviews),
             .pAttachments = imageviews,
             .width = static_cast<uint32_t>(windowWidth),
             .height = static_cast<uint32_t>(windowHeight),
@@ -1222,15 +1191,13 @@ void InitializeState(int windowWidth, int windowHeight)
         .pVertexAttributeDescriptions = vertex_input_attributes.data(),
     };
 
-    VkPipelineInputAssemblyStateCreateInfo input_assembly_state{
+    VkPipelineInputAssemblyStateCreateInfo input_assembly_state {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO,
-        .pNext = nullptr,
         .topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST,
     };
 
-    VkPipelineRasterizationStateCreateInfo rasterization_state{
+    VkPipelineRasterizationStateCreateInfo rasterization_state {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO,
-        .pNext = nullptr,
         .depthClampEnable = VK_FALSE,
         .rasterizerDiscardEnable = VK_FALSE,
         .polygonMode = VK_POLYGON_MODE_FILL,
@@ -1240,7 +1207,7 @@ void InitializeState(int windowWidth, int windowHeight)
         .lineWidth = 1.0f,
     };
 
-    VkPipelineColorBlendAttachmentState att_state[1] = {
+    VkPipelineColorBlendAttachmentState att_state[] = {
         {
             .blendEnable = VK_FALSE,
             .colorWriteMask = 0xf,
@@ -1249,15 +1216,13 @@ void InitializeState(int windowWidth, int windowHeight)
 
     VkPipelineColorBlendStateCreateInfo color_blend_state {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-        .pNext = nullptr,
-        .attachmentCount = 1,
+        .attachmentCount = std::size(att_state),
         .pAttachments = att_state,
     };
 
     VkStencilOpState keep_always{ .failOp = VK_STENCIL_OP_KEEP, .passOp = VK_STENCIL_OP_KEEP, .compareOp = VK_COMPARE_OP_ALWAYS };
     VkPipelineDepthStencilStateCreateInfo depth_stencil_state {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
-        .pNext = nullptr,
         .depthTestEnable = VK_TRUE,
         .depthWriteEnable = VK_TRUE,
         .depthCompareOp = VK_COMPARE_OP_LESS_OR_EQUAL,
@@ -1273,18 +1238,16 @@ void InitializeState(int windowWidth, int windowHeight)
         .scissorCount = 1,
     };
 
-    VkPipelineMultisampleStateCreateInfo multisample_state{
+    VkPipelineMultisampleStateCreateInfo multisample_state {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-        .pNext = nullptr,
         .rasterizationSamples = VK_SAMPLE_COUNT_1_BIT,
         .pSampleMask = NULL,
     };
 
     VkDynamicState dynamicStateEnables[]{ VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
 
-    VkPipelineDynamicStateCreateInfo dynamicState{
+    VkPipelineDynamicStateCreateInfo dynamicState {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO,
-        .pNext = nullptr,
         .dynamicStateCount = static_cast<uint32_t>(std::size(dynamicStateEnables)),
         .pDynamicStates = dynamicStateEnables,
     };
@@ -1297,14 +1260,12 @@ void InitializeState(int windowWidth, int windowHeight)
 
     VkPipelineShaderStageCreateInfo vertexShaderCreate {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        .pNext = nullptr,
         .stage = VK_SHADER_STAGE_VERTEX_BIT,
         .module = vertex_shader_module,
         .pName = "main",
     };
     VkPipelineShaderStageCreateInfo fragmentShaderCreate {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        .pNext = nullptr,
         .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
         .module = fragment_shader_module,
         .pName = "main",
@@ -1313,7 +1274,6 @@ void InitializeState(int windowWidth, int windowHeight)
 
     VkPipelineLayoutCreateInfo create_layout {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .pNext = nullptr,
         .setLayoutCount = 1,
         .pSetLayouts = &descriptor_set_layout,
     };
@@ -1321,7 +1281,6 @@ void InitializeState(int windowWidth, int windowHeight)
 
     VkGraphicsPipelineCreateInfo create_pipeline {
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-        .pNext = nullptr,
         .stageCount = static_cast<uint32_t>(shaderStages.size()),
         .pStages = shaderStages.data(),
         .pVertexInputState = &vertex_input_state,
@@ -1409,7 +1368,6 @@ static void DrawFrame(GLFWwindow *window)
 
     VkCommandBufferBeginInfo begin {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-        .pNext = nullptr,
         .flags = 0, // VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
         .pInheritanceInfo = nullptr,
     };
@@ -1421,7 +1379,6 @@ static void DrawFrame(GLFWwindow *window)
     };
     VkRenderPassBeginInfo beginRenderpass {
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
-        .pNext = nullptr,
         .renderPass = renderPass,
         .framebuffer = sd.framebuffer,
         .renderArea = {{0, 0}, {static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight)}},
@@ -1456,7 +1413,6 @@ static void DrawFrame(GLFWwindow *window)
     VkPipelineStageFlags waitdststagemask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
     VkSubmitInfo submit {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
-        .pNext = nullptr,
         .waitSemaphoreCount = 1,
         .pWaitSemaphores = &sd.image_acquired_semaphore,
         .pWaitDstStageMask = &waitdststagemask,
@@ -1470,7 +1426,6 @@ static void DrawFrame(GLFWwindow *window)
     // 13. Present the rendered result
     VkPresentInfoKHR present {
         .sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR,
-        .pNext = nullptr,
         .waitSemaphoreCount = 1,
         .pWaitSemaphores = &submission.draw_completed_semaphore,
         .swapchainCount = 1,
