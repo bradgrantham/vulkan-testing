@@ -175,6 +175,15 @@ struct Vertex
         std::copy(t_, t_ + 2, t);
     }
     Vertex() {}
+    static std::vector<VkVertexInputAttributeDescription> GetVertexInputAttributeDescription()
+    {
+        std::vector<VkVertexInputAttributeDescription> vertex_input_attributes;
+        vertex_input_attributes.push_back({0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, v)});
+        vertex_input_attributes.push_back({1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, n)});
+        vertex_input_attributes.push_back({2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Vertex, c)});
+        vertex_input_attributes.push_back({3, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, t)});
+        return vertex_input_attributes;
+    }
 };
 
 struct Buffer
@@ -245,7 +254,7 @@ struct VertexUniforms
 struct FragmentUniforms
 {
     vec3 light_position;
-    float pad;
+    float pad; // XXX grr - why can't I get this right with "pragma align"?
     vec3 light_color;
     float pad2;
 };
@@ -274,7 +283,10 @@ void CreateInstance(VkInstance* instance, bool enableValidation)
 	layer_set.insert("VK_LAYER_KHRONOS_validation");
     }
 
+    // Make this an immediately invoked lambda so I know the c_str() I called remains
+    // valid through the scope of this lambda.
     [&](const std::set<std::string> &extension_set, const std::set<std::string> &layer_set) {
+
         std::vector<const char*> extensions;
         std::vector<const char*> layers;
 
@@ -306,6 +318,7 @@ void CreateInstance(VkInstance* instance, bool enableValidation)
         };
 
 	VK_CHECK(vkCreateInstance(&create, nullptr, instance));
+
     }(extension_set, layer_set);
 }
 
@@ -417,7 +430,7 @@ std::vector<uint32_t> GetFileAsCode(const std::string& filename)
 {
     std::vector<uint8_t> text = GetFileContents(fopen(filename.c_str(), "rb"));
     std::vector<uint32_t> code((text.size() + sizeof(uint32_t) - 1) / sizeof(uint32_t));
-    memcpy(code.data(), text.data(), text.size());
+    memcpy(code.data(), text.data(), text.size()); // XXX this is probably UB that just happens to work... also maybe endian
     return code;
 }
 
@@ -913,6 +926,7 @@ void InitializeState(int windowWidth, int windowHeight)
     VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, nullptr));
     std::vector<VkSurfaceFormatKHR> surfaceFormats(formatCount);
     VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, surfaceFormats.data()));
+
     VkSurfaceFormatKHR surfaceFormat = PickSurfaceFormat(surfaceFormats.data(), formatCount);
     VkFormat chosenFormat = surfaceFormat.format;
     VkColorSpaceKHR chosenColorSpace = surfaceFormat.colorSpace;
@@ -942,7 +956,7 @@ void InitializeState(int windowWidth, int windowHeight)
 
 // frame-related stuff - swapchains indices, fences, semaphores
 
-    auto swapchain_images = GetSwapchainImages(device, swapchain);
+    std::vector<VkImage> swapchain_images = GetSwapchainImages(device, swapchain);
     assert(swapchain_image_count == swapchain_images.size());
     swapchain_image_count = static_cast<uint32_t>(swapchain_images.size());
 
@@ -986,7 +1000,8 @@ void InitializeState(int windowWidth, int windowHeight)
     UniformBuffer fragment_ub{1, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(FragmentUniforms)};
     UniformBuffer shading_ub{2, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(ShadingUniforms)};
 
-    // XXX at the moment this order is assumed for "struct submission" uniforms Buffer structs
+    // XXX at the moment this order is assumed for "struct submission"
+    // uniforms Buffer structs, see *_uniforms setting code in DrawFrame
     uniforms.push_back(vertex_ub);
     uniforms.push_back(fragment_ub);
     uniforms.push_back(shading_ub);
@@ -1177,11 +1192,7 @@ void InitializeState(int windowWidth, int windowHeight)
         .inputRate = VK_VERTEX_INPUT_RATE_VERTEX,
     };
 
-    VkVertexInputAttributeDescription vertex_position {0, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, v)};
-    VkVertexInputAttributeDescription vertex_normal{1, 0, VK_FORMAT_R32G32B32_SFLOAT, offsetof(Vertex, n)};
-    VkVertexInputAttributeDescription vertex_color{2, 0, VK_FORMAT_R32G32B32A32_SFLOAT, offsetof(Vertex, c)};
-    VkVertexInputAttributeDescription vertex_texcoord{3, 0, VK_FORMAT_R32G32_SFLOAT, offsetof(Vertex, t)};
-    std::vector<VkVertexInputAttributeDescription> vertex_input_attributes{vertex_position, vertex_normal, vertex_color, vertex_texcoord};
+    std::vector<VkVertexInputAttributeDescription> vertex_input_attributes = Vertex::GetVertexInputAttributeDescription();
 
     VkPipelineVertexInputStateCreateInfo vertex_input_state {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO,
