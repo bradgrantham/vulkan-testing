@@ -1,8 +1,7 @@
-cleanup
-    try a second objct
-    why shouldn't there be SUBMISSIONS_IN_FLIGHT count depth images?
-    handle window resize - wait, destroy, recreate per-swapchain data
-    add ImGUI?
-raytracing
+handle window resize - wait, destroy, recreate per-swapchain data
 texturing
+try a second objct
+cleanup - why shouldn't there be SUBMISSIONS_IN_FLIGHT count depth images?
+add ImGUI?
+raytracing
 load simple gltf2s
