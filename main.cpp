@@ -1158,11 +1158,11 @@ void InitializeState(int windowWidth, int windowHeight)
     VkRenderPassCreateInfo render_pass_create {
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
         .flags = 0,
-        .attachmentCount = std::size(attachments),
+        .attachmentCount = static_cast<uint32_t>(std::size(attachments)),
         .pAttachments = attachments,
         .subpassCount = 1,
         .pSubpasses = &subpass,
-        .dependencyCount = std::size(attachment_dependencies),
+        .dependencyCount = static_cast<uint32_t>(std::size(attachment_dependencies)),
         .pDependencies = attachment_dependencies,
     };
     VK_CHECK(vkCreateRenderPass(device, &render_pass_create, nullptr, &renderPass));
@@ -1173,7 +1173,7 @@ void InitializeState(int windowWidth, int windowHeight)
             .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
             .flags = 0,
             .renderPass = renderPass,
-            .attachmentCount = std::size(imageviews),
+            .attachmentCount = static_cast<uint32_t>(std::size(imageviews)),
             .pAttachments = imageviews,
             .width = static_cast<uint32_t>(windowWidth),
             .height = static_cast<uint32_t>(windowHeight),
@@ -1226,7 +1226,7 @@ void InitializeState(int windowWidth, int windowHeight)
 
     VkPipelineColorBlendStateCreateInfo color_blend_state {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
-        .attachmentCount = std::size(att_state),
+        .attachmentCount = static_cast<uint32_t>(std::size(att_state)),
         .pAttachments = att_state,
     };
 
