@@ -34,6 +34,9 @@
 
 static constexpr uint64_t DEFAULT_FENCE_TIMEOUT = 100000000000;
 
+template <typename T>
+size_t ByteCount(const std::vector<T>& v) { return sizeof(T) * v.size(); }
+
 #define STR(f) #f
 
 std::map<VkResult, std::string> MapVkResultToName =
@@ -167,6 +170,7 @@ struct Vertex
     float n[3];
     float c[4];
     float t[2];
+
     Vertex(float v_[3], float n_[3], float c_[4], float t_[2])
     {
         std::copy(v_, v_ + 3, v);
@@ -175,6 +179,7 @@ struct Vertex
         std::copy(t_, t_ + 2, t);
     }
     Vertex() {}
+
     static std::vector<VkVertexInputAttributeDescription> GetVertexInputAttributeDescription()
     {
         std::vector<VkVertexInputAttributeDescription> vertex_input_attributes;
@@ -507,9 +512,6 @@ void PrintImplementationInformation()
         printf("\t%s, %08X\n", ext.extensionName, ext.specVersion);
     }
 }
-
-template <typename T>
-size_t ByteCount(const std::vector<T>& v) { return sizeof(T) * v.size(); }
 
 uint32_t FindQueueFamily(VkPhysicalDevice physical_device, VkQueueFlags queue_flags)
 {
@@ -962,8 +964,9 @@ void InitializeState(int windowWidth, int windowHeight)
 
     per_swapchainimage.resize(swapchain_image_count);
     for(uint32_t i = 0; i < swapchain_image_count; i++) {
-        auto& sd = per_swapchainimage[i];
-        sd.image = swapchain_images[i];
+        auto& per_image = per_swapchainimage[i];
+
+        per_image.image = swapchain_images[i];
 
         // XXX create a timeline semaphore by chaining after a
         // VkSemaphoreTypeCreateInfo with VkSemaphoreTypeCreateInfo =
@@ -972,7 +975,7 @@ void InitializeState(int windowWidth, int windowHeight)
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
             .flags = 0,
         };
-        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &sd.image_acquired_semaphore));
+        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &per_image.image_acquired_semaphore));
     }
 
     std::vector<VkImageView> colorImageViews(swapchain_image_count);
@@ -995,16 +998,12 @@ void InitializeState(int windowWidth, int windowHeight)
         VK_CHECK(vkCreateImageView(device, &colorImageViewCreate, nullptr, &colorImageViews[i]));
     }
 
-    // Should probe these from shader code somehow
-    UniformBuffer vertex_ub{0, VK_SHADER_STAGE_VERTEX_BIT, sizeof(VertexUniforms)};
-    UniformBuffer fragment_ub{1, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(FragmentUniforms)};
-    UniformBuffer shading_ub{2, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(ShadingUniforms)};
-
+    // XXX Should probe these from shader code somehow
     // XXX at the moment this order is assumed for "struct submission"
     // uniforms Buffer structs, see *_uniforms setting code in DrawFrame
-    uniforms.push_back(vertex_ub);
-    uniforms.push_back(fragment_ub);
-    uniforms.push_back(shading_ub);
+    uniforms.push_back({0, VK_SHADER_STAGE_VERTEX_BIT, sizeof(VertexUniforms)});
+    uniforms.push_back({1, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(FragmentUniforms)});
+    uniforms.push_back({2, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(ShadingUniforms)});
 
     std::vector<VkDescriptorSetLayoutBinding> layout_bindings;
     for(const auto& uniform: uniforms) {
@@ -1329,7 +1328,7 @@ static void DrawFrame(GLFWwindow *window)
     glfwGetWindowSize(window, &windowWidth, &windowHeight);
 
     auto& submission = submissions[submission_index];
-    auto& sd = per_swapchainimage[swapchain_index];
+    auto& per_image = per_swapchainimage[swapchain_index];
 
     VK_CHECK(vkWaitForFences(device, 1, &submission.draw_completed_fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
     VK_CHECK(vkResetFences(device, 1, &submission.draw_completed_fence));
@@ -1373,7 +1372,7 @@ static void DrawFrame(GLFWwindow *window)
     shading_uniforms->specular_color.set(drawable->attr.specular_color); // XXX drops specular_color[3]
     shading_uniforms->shininess = drawable->attr.shininess;
 
-    VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, sd.image_acquired_semaphore, VK_NULL_HANDLE, &swapchain_index));
+    VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, per_image.image_acquired_semaphore, VK_NULL_HANDLE, &swapchain_index));
 
     auto cb = submission.command_buffer;
 
@@ -1391,7 +1390,7 @@ static void DrawFrame(GLFWwindow *window)
     VkRenderPassBeginInfo beginRenderpass {
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
         .renderPass = renderPass,
-        .framebuffer = sd.framebuffer,
+        .framebuffer = per_image.framebuffer,
         .renderArea = {{0, 0}, {static_cast<uint32_t>(windowWidth), static_cast<uint32_t>(windowHeight)}},
         .clearValueCount = static_cast<uint32_t>(std::size(clearValues)),
         .pClearValues = clearValues,
@@ -1425,7 +1424,7 @@ static void DrawFrame(GLFWwindow *window)
     VkSubmitInfo submit {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &sd.image_acquired_semaphore,
+        .pWaitSemaphores = &per_image.image_acquired_semaphore,
         .pWaitDstStageMask = &waitdststagemask,
         .commandBufferCount = 1,
         .pCommandBuffers = &cb,
