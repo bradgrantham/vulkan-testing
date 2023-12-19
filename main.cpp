@@ -1262,26 +1262,6 @@ void InitializeState(int windowWidth, int windowHeight)
         .pDynamicStates = dynamicStateEnables,
     };
 
-    std::vector<uint32_t> vertex_shader_code = GetFileAsCode("testing.vert");
-    VkShaderModule vertex_shader_module = CreateShaderModule(device, vertex_shader_code);
-
-    std::vector<uint32_t> fragment_shader_code = GetFileAsCode("testing.frag");
-    VkShaderModule fragment_shader_module = CreateShaderModule(device, fragment_shader_code);
-
-    VkPipelineShaderStageCreateInfo vertexShaderCreate {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        .stage = VK_SHADER_STAGE_VERTEX_BIT,
-        .module = vertex_shader_module,
-        .pName = "main",
-    };
-    VkPipelineShaderStageCreateInfo fragmentShaderCreate {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
-        .stage = VK_SHADER_STAGE_FRAGMENT_BIT,
-        .module = fragment_shader_module,
-        .pName = "main",
-    };
-    std::vector<VkPipelineShaderStageCreateInfo> shaderStages{vertexShaderCreate, fragmentShaderCreate};
-
     VkPipelineLayoutCreateInfo create_layout {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
@@ -1289,10 +1269,29 @@ void InitializeState(int windowWidth, int windowHeight)
     };
     VK_CHECK(vkCreatePipelineLayout(device, &create_layout, nullptr, &pipeline_layout));
 
+    std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
+
+    std::vector<std::pair<std::string, VkShaderStageFlagBits>> shader_binaries {
+        {"testing.vert", VK_SHADER_STAGE_VERTEX_BIT},
+        {"testing.frag", VK_SHADER_STAGE_FRAGMENT_BIT}
+    };
+    
+    for(const auto& [name, stage]: shader_binaries) {
+        std::vector<uint32_t> shader_code = GetFileAsCode(name);
+        VkShaderModule shader_module = CreateShaderModule(device, shader_code);
+        VkPipelineShaderStageCreateInfo shader_create {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = stage,
+            .module = shader_module,
+            .pName = "main",
+        };
+        shader_stages.push_back(shader_create);
+    }
+
     VkGraphicsPipelineCreateInfo create_pipeline {
         .sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO,
-        .stageCount = static_cast<uint32_t>(shaderStages.size()),
-        .pStages = shaderStages.data(),
+        .stageCount = static_cast<uint32_t>(shader_stages.size()),
+        .pStages = shader_stages.data(),
         .pVertexInputState = &vertex_input_state,
         .pInputAssemblyState = &input_assembly_state,
         .pViewportState = &viewport_state,
