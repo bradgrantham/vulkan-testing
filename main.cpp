@@ -700,6 +700,45 @@ struct Drawable
 
     void CreateDeviceData(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue)
     {
+        // Textures
+        // actual RGB already loaded in... LoadModel?
+        VkFormatProperties format_properties;
+        vkGetPhysicalDeviceFormatProperties(device, desired_format, &format_properties);
+        // Create a staging buffer the size of the texture with VkFlags VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+        // allocate memory
+        // bind memory to buffer
+        // find out texture subresource layout
+        // Map buffer
+        // Copy into buffer
+        // Unmap buffer
+
+	// Create an image for the texture with VK_IMAGE_TILING_OPTIMAL,
+	// VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+	// VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+        // allocate Memory
+        // bind memory to image
+
+	// transition image from VK_IMAGE_LAYOUT_PREINITIALIZED,
+	// to VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        // from VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
+        // to VK_PIPELINE_STAGE_TRANSFER_BIT
+        // vkCmdPipelineBarrier
+
+        // Copy buffer to image
+        // vkCmdCopyBufferToImage(... VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL ...)
+
+	// transition image from VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+        // to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+        // from VK_PIPELINE_STAGE_TRANSFER_BIT 
+        // to VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+        // vkCmdPipelineBarrier
+
+        // create VkSampler
+        // create VkImageView
+
+        // Sampler and ImageView are descriptor sets that are written 
+
+        // Geometry
         Buffer vertex_buffer;
         Buffer index_buffer;
         CreateGeometryBuffers(physical_device, device, queue, vertices, indices, &vertex_buffer, &index_buffer);
