@@ -670,28 +670,29 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
     vkDestroyCommandPool(device, command_pool, nullptr);
 }
 
+struct RGBA8UNormImage
+{
+    int width;
+    int height;
+    std::vector<uint8_t> rgba8_unorm;
+    RGBA8UNormImage(int width, int height, std::vector<uint8_t>& rgba8_unorm) :
+        width(width),
+        height(height),
+        rgba8_unorm(std::move(rgba8_unorm))
+    {}
+};
+
 struct Drawable
 {
     struct Attributes
     {
-        struct RGBA8UNormImage {
-            int width;
-            int height;
-            std::vector<uint8_t> rgba8_unorm;
-            RGBA8UNormImage(int width, int height, std::vector<uint8_t>& rgba8_unorm) :
-                width(width),
-                height(height),
-                rgba8_unorm(std::move(rgba8_unorm))
-            {}
-        };
-
         float specular_color[4];
         float shininess;
-        RGBA8UNormImage texture;
+        std::shared_ptr<RGBA8UNormImage> texture;
 
-        Attributes(float specular_color[4], float shininess, int width, int height, std::vector<uint8_t>& rgba8_unorm) :
+        Attributes(float specular_color[4], float shininess, std::shared_ptr<RGBA8UNormImage> texture) :
             shininess(shininess),
-            texture(width, height, rgba8_unorm)
+            texture(texture)
         {
             this->specular_color[0] = specular_color[0];
             this->specular_color[1] = specular_color[1];
@@ -711,11 +712,10 @@ struct Drawable
     std::map<VkDevice, DrawableBuffersOnDevice> buffers_by_device;
 
     Drawable(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
-        float specular_color[4], float shininess,
-        int texture_width, int texture_height, std::vector<uint8_t>& rgba8_unorm) :
+        float specular_color[4], float shininess, std::shared_ptr<RGBA8UNormImage> texture) :
             vertices(vertices),
             indices(indices),
-            attr(specular_color, shininess, texture_width, texture_height, rgba8_unorm)
+            attr(specular_color, shininess, texture)
     {
         triangleCount = static_cast<int>(indices.size() / 3);
         for(uint32_t i = 0; i < vertices.size(); i++) {
@@ -1846,18 +1846,19 @@ void LoadModel(const char *filename)
     float shininess;
     ParseTriSrc(fp, vertices, indices, texture_name, specular_color, shininess);
 
-    int width = 0, height = 0;
-    float *float_pixels = nullptr;
-    std::vector<uint8_t> rgba8_unorm;
+    std::shared_ptr<RGBA8UNormImage> texture;
     if(texture_name != "*") {
         std::filesystem::path path {filename};
-        std::filesystem::path texture {texture_name};
-        std::filesystem::path texture_path = path.parent_path() / texture;
+        std::filesystem::path texture_path = path.parent_path() / texture_name;
         FILE *texture_file = fopen(texture_path.c_str(), "rb");
         if(texture_file == nullptr) {
             fprintf(stderr, "couldn't open texture file %s for reading\n", texture_name.c_str());
             exit(EXIT_FAILURE);
         }
+
+        int width = 0, height = 0;
+        float *float_pixels = nullptr;
+        std::vector<uint8_t> rgba8_unorm;
         int result = pnmRead(texture_file, &width, &height, &float_pixels);
         if(!result) {
             fprintf(stderr, "couldn't read PPM image from %s\n", texture_name.c_str());
@@ -1868,10 +1869,10 @@ void LoadModel(const char *filename)
         for(int i = 0; i < width * height * 4; i++) {
             rgba8_unorm[i] = static_cast<uint8_t>(std::clamp(float_pixels[i] * 255.999f, 0.0f, 255.0f));
         }
+        texture = std::make_shared<RGBA8UNormImage>(width, height, rgba8_unorm);
     }
 
-    drawable = std::make_unique<Drawable>(vertices, indices, specular_color, shininess, width, height, rgba8_unorm);
-    printf("%zd\n", rgba8_unorm.size());
+    drawable = std::make_unique<Drawable>(vertices, indices, specular_color, shininess, texture);
 
     object_translation = drawable->bounds.center() * -1;
     float dim = length(drawable->bounds.dim());
