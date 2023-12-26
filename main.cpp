@@ -680,6 +680,8 @@ struct RGBA8UNormImage
         height(height),
         rgba8_unorm(std::move(rgba8_unorm))
     {}
+    VkFormat GetVulkanFormat() { return VK_FORMAT_R8G8B8A8_UNORM; }
+    size_t GetSize() { return rgba8_unorm.size(); }
 };
 
 struct Drawable
@@ -715,43 +717,73 @@ struct Drawable
 
     void CreateDeviceData(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue)
     {
-        // Textures
-        // actual RGB already loaded in... LoadModel?
-        // VkFormatProperties format_properties;
-        // vkGetPhysicalDeviceFormatProperties(device, desired_format, &format_properties);
-        // Create a staging buffer the size of the texture with VkFlags VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
-        // allocate memory
-        // bind memory to buffer
-        // find out texture subresource layout
-        // Map buffer
-        // Copy into buffer
-        // Unmap buffer
+        if(texture) {
+            VkFormatProperties format_properties;
+            vkGetPhysicalDeviceFormatProperties(physical_device, texture->GetVulkanFormat(), &format_properties);
 
-	// Create an image for the texture with VK_IMAGE_TILING_OPTIMAL,
-	// VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-	// VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
-        // allocate Memory
-        // bind memory to image
+            Buffer staging_buffer;
+            staging_buffer.Create(physical_device, device, texture->GetSize(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            VK_CHECK(vkMapMemory(device, staging_buffer.mem, 0, texture->GetSize(), 0, &staging_buffer.mapped));
+            memcpy(staging_buffer.mapped, texture->rgba8_unorm.data(), texture->GetSize());
+            vkUnmapMemory(device, staging_buffer.mem);
 
-	// transition image from VK_IMAGE_LAYOUT_PREINITIALIZED,
-	// to VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        // from VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
-        // to VK_PIPELINE_STAGE_TRANSFER_BIT
-        // vkCmdPipelineBarrier
+            // Create an image for the texture with VK_IMAGE_TILING_OPTIMAL,
+            // VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            // VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+            VkImageCreateInfo createImageInfo {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+                .flags = 0,
+                .imageType = VK_IMAGE_TYPE_2D,
+                .format = texture->GetVulkanFormat(),
+                .extent{static_cast<uint32_t>(texture->width), static_cast<uint32_t>(texture->height), 1},
+                .mipLevels = 1,
+                .arrayLayers = 1,
+                .samples = VK_SAMPLE_COUNT_1_BIT,
+                .tiling = VK_IMAGE_TILING_OPTIMAL,
+                .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+            };
+            VkImage textureImage;
+            VK_CHECK(vkCreateImage(device, &createImageInfo, nullptr, &textureImage));
 
-        // Copy buffer to image
-        // vkCmdCopyBufferToImage(... VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL ...)
+            VkMemoryRequirements textureMemReqs;
+            vkGetImageMemoryRequirements(device, textureImage, &textureMemReqs);
 
-	// transition image from VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
-        // to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-        // from VK_PIPELINE_STAGE_TRANSFER_BIT 
-        // to VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
-        // vkCmdPipelineBarrier
+            VkPhysicalDeviceMemoryProperties memory_properties;
+            vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
 
-        // create VkSampler
-        // create VkImageView
+            uint32_t memoryTypeIndex = getMemoryTypeIndex(memory_properties, textureMemReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+            VkDeviceMemory textureMemory;
+            VkMemoryAllocateInfo textureAllocate {
+                .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+                .allocationSize = textureMemReqs.size,
+                .memoryTypeIndex = memoryTypeIndex,
+            };
+            VK_CHECK(vkAllocateMemory(device, &textureAllocate, nullptr, &textureMemory));
+            VK_CHECK(vkBindImageMemory(device, textureImage, textureMemory, 0));
+        
+            // allocate Memory
+            // bind memory to image
 
-        // Sampler and ImageView are descriptor sets that are written 
+            // transition image from VK_IMAGE_LAYOUT_PREINITIALIZED,
+            // to VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+            // from VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
+            // to VK_PIPELINE_STAGE_TRANSFER_BIT
+            // vkCmdPipelineBarrier
+
+            // Copy buffer to image
+            // vkCmdCopyBufferToImage(... VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL ...)
+
+            // transition image from VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
+            // to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
+            // from VK_PIPELINE_STAGE_TRANSFER_BIT 
+            // to VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
+            // vkCmdPipelineBarrier
+
+            // create VkSampler
+            // create VkImageView
+
+            // Sampler and ImageView are descriptor sets that are written 
+        }
 
         // Geometry
         Buffer vertex_buffer;
@@ -1122,7 +1154,6 @@ void InitializeState(int windowWidth, int windowHeight)
     };
     VK_CHECK(vkAllocateMemory(device, &depthAllocate, nullptr, &depthImageMemory));
     VK_CHECK(vkBindImageMemory(device, depthImage, depthImageMemory, 0));
-    // bind image to memory
 
     VkImageView depthImageView;
     VkImageViewCreateInfo depthImageViewCreate {
