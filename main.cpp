@@ -9,6 +9,7 @@
 #include <set>
 #include <string>
 #include <array>
+#include <filesystem>
 
 #include <cstring>
 #include <cassert>
@@ -673,10 +674,30 @@ struct Drawable
 {
     struct Attributes
     {
-        char texture_name[512];
-        char tag_name[512];
+        struct RGBA8UNormImage {
+            int width;
+            int height;
+            std::vector<uint8_t> rgba8_unorm;
+            RGBA8UNormImage(int width, int height, std::vector<uint8_t>& rgba8_unorm) :
+                width(width),
+                height(height),
+                rgba8_unorm(std::move(rgba8_unorm))
+            {}
+        };
+
         float specular_color[4];
         float shininess;
+        RGBA8UNormImage texture;
+
+        Attributes(float specular_color[4], float shininess, int width, int height, std::vector<uint8_t>& rgba8_unorm) :
+            shininess(shininess),
+            texture(width, height, rgba8_unorm)
+        {
+            this->specular_color[0] = specular_color[0];
+            this->specular_color[1] = specular_color[1];
+            this->specular_color[2] = specular_color[2];
+            this->specular_color[3] = specular_color[3];
+        }
     };
 
     aabox bounds;
@@ -689,8 +710,12 @@ struct Drawable
     typedef std::array<Buffer, 2> DrawableBuffersOnDevice;
     std::map<VkDevice, DrawableBuffersOnDevice> buffers_by_device;
 
-    Drawable(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, const Attributes& attr) :
-        vertices(vertices), indices(indices), attr(attr)
+    Drawable(std::vector<Vertex>& vertices, std::vector<uint32_t>& indices,
+        float specular_color[4], float shininess,
+        int texture_width, int texture_height, std::vector<uint8_t>& rgba8_unorm) :
+            vertices(vertices),
+            indices(indices),
+            attr(specular_color, shininess, texture_width, texture_height, rgba8_unorm)
     {
         triangleCount = static_cast<int>(indices.size() / 3);
         for(uint32_t i = 0; i < vertices.size(); i++) {
@@ -702,8 +727,8 @@ struct Drawable
     {
         // Textures
         // actual RGB already loaded in... LoadModel?
-        VkFormatProperties format_properties;
-        vkGetPhysicalDeviceFormatProperties(device, desired_format, &format_properties);
+        // VkFormatProperties format_properties;
+        // vkGetPhysicalDeviceFormatProperties(device, desired_format, &format_properties);
         // Create a staging buffer the size of the texture with VkFlags VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
         // allocate memory
         // bind memory to buffer
@@ -1589,27 +1614,29 @@ static void ScrollCallback(GLFWwindow *window, double dx, double dy)
     CurrentManip->move(static_cast<float>(dx / width), static_cast<float>(dy / height));
 }
 
-bool ParseTriSrc(FILE *fp, std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, Drawable::Attributes &object)
+bool ParseTriSrc(FILE *fp, std::vector<Vertex>& vertices, std::vector<uint32_t>& indices, std::string& texture_name, float specular_color[4], float& shininess)
 {
-    while(fscanf(fp,"\"%[^\"]\"", object.texture_name) == 1) {
-        if(strcmp(object.texture_name, "*") == 0) {
-            object.texture_name[0] = '\0';
-        }
-
-	if(fscanf(fp,"%s ", object.tag_name) != 1) {
+    char texture_name_c_str[512];
+    char tag_name_c_str[512];
+    // XXX each triangle can reference a texture, but I ignore all but the last in this hacked parser
+    while(fscanf(fp,"\"%[^\"]\"", texture_name_c_str) == 1) {
+	if(fscanf(fp,"%s ", tag_name_c_str) != 1) {
+            // XXX each triangle can reference a tag name, but I ignore all but the last in this hacked parser
+            // It really can be ignored in a sense because it's a hint about part assemblies, spatial locality, etc
 	    fprintf(stderr, "couldn't read tag name\n");
 	    return false;
 	}
 
-	if(fscanf(fp,"%g %g %g %g %g ", &object.specular_color[0], &object.specular_color[1],
-	    &object.specular_color[2], &object.specular_color[3], &object.shininess) != 5) {
+        // XXX each triangle can reference object specular and shininess, but I ignore all but the last in this hacked parser
+	if(fscanf(fp,"%f %f %f %f %f ", &specular_color[0], &specular_color[1],
+	    &specular_color[2], &specular_color[3], &shininess) != 5) {
 	    fprintf(stderr, "couldn't read specular properties\n");
 	    return false;
 	}
 
-	if(object.shininess > 0 && object.shininess < 1) {
+	if(shininess > 0 && shininess < 1) {
 	    // XXX I forgot what shininess units are!
-	    object.shininess *= 10;
+	    shininess *= 10;
 	}
 
         for(int i = 0; i < 3; i++) {
@@ -1631,12 +1658,176 @@ bool ParseTriSrc(FILE *fp, std::vector<Vertex>& vertices, std::vector<uint32_t>&
             vertices.push_back(Vertex(v, n, c, t));
         }
 
+        // old code from another project for reference
         // MATERIAL mtl(texture_name, specular_color, shininess);
-
         // sets.get_triangle_set(tag_name, mtl).add_triangle(verts[0], verts[1], verts[2]);
     }
+
+    texture_name = texture_name_c_str;
+
     return true;
 }
+
+
+// very old code
+static void skipComments(FILE *fp)
+{
+    int c;
+
+    while((c = fgetc(fp)) == '#')
+        while((c = fgetc(fp)) != '\n');
+    ungetc(c, fp);
+}
+
+
+int pnmRead(FILE *file, int *w, int *h, float **pixels)
+{
+    unsigned char	dummyByte;
+    int			i;
+    float		max;
+    char		token;
+    int			width, height;
+    float		*rgbPixels;
+
+    fscanf(file, " ");
+
+    skipComments(file);
+
+    if(fscanf(file, "P%c ", &token) != 1) {
+         fprintf(stderr, "pnmRead: Had trouble reading PNM tag\n");
+	 return 0;
+    }
+
+    skipComments(file);
+
+    if(fscanf(file, "%d ", &width) != 1) {
+         fprintf(stderr, "pnmRead: Had trouble reading PNM width\n");
+	 return 0;
+    }
+
+    skipComments(file);
+
+    if(fscanf(file, "%d ", &height) != 1) {
+         fprintf(stderr, "pnmRead: Had trouble reading PNM height\n");
+	 return 0;
+    }
+
+    skipComments(file);
+
+    if(token != '1' && token != '4') {
+        if(fscanf(file, "%f", &max) != 1) {
+             fprintf(stderr, "pnmRead: Had trouble reading PNM max value\n");
+	     return 0;
+        }
+    }
+
+    rgbPixels = static_cast<float*>(malloc(width * height * 4 * sizeof(float)));
+    if(rgbPixels == NULL) {
+         fprintf(stderr, "pnmRead: Couldn't allocate %zd bytes\n", width * height * 4 * sizeof(float));
+         fprintf(stderr, "pnmRead: (For a %d by %d image)\n", width, height);
+	 return 0;
+    }
+
+    if(token != '4') {
+	skipComments(file);
+    }
+
+    if(token != '4') { 
+        // ??
+        fread(&dummyByte, 1, 1, file);	/* chuck white space */
+    }
+
+    if(token == '1')
+    {
+	for(i = 0; i < width * height; i++)
+	{
+	    int pixel;
+	    fscanf(file, "%d", &pixel);
+	    pixel = 1 - pixel;
+	    rgbPixels[i * 4 + 0] = pixel;
+	    rgbPixels[i * 4 + 1] = pixel;
+	    rgbPixels[i * 4 + 2] = pixel;
+	    rgbPixels[i * 4 + 3] = 1.0;
+	}
+    }
+    else if(token == '2')
+    {
+	for(i = 0; i < width * height; i++)
+	{
+	    int pixel;
+	    fscanf(file, "%d", &pixel);
+	    rgbPixels[i * 4 + 0] = pixel / max;
+	    rgbPixels[i * 4 + 1] = pixel / max;
+	    rgbPixels[i * 4 + 2] = pixel / max;
+	    rgbPixels[i * 4 + 3] = 1.0;
+	}
+    }
+    else if(token == '3')
+    {
+	for(i = 0; i < width * height; i++)
+	{
+	    int r, g, b;
+	    fscanf(file, "%d %d %d", &r, &g, &b);
+	    rgbPixels[i * 4 + 0] = r / max;
+	    rgbPixels[i * 4 + 1] = g / max;
+	    rgbPixels[i * 4 + 2] = b / max;
+	    rgbPixels[i * 4 + 3] = 1.0;
+	}
+    }
+    else if(token == '4')
+    {
+        int bitnum = 0;
+
+	for(i = 0; i < width * height; i++)
+	{
+	    unsigned char pixel;
+	    unsigned char value = 0;
+
+	    if(bitnum == 0) {
+	        fread(&value, 1, 1, file);
+            }
+
+	    pixel = (1 - ((value >> (7 - bitnum)) & 1));
+	    rgbPixels[i * 4 + 0] = pixel;
+	    rgbPixels[i * 4 + 1] = pixel;
+	    rgbPixels[i * 4 + 2] = pixel;
+	    rgbPixels[i * 4 + 3] = 1.0;
+
+	    if(++bitnum == 8 || ((i + 1) % width) == 0) {
+	        bitnum = 0;
+            }
+	}
+    }
+    else if(token == '5')
+    {
+	for(i = 0; i < width * height; i++)
+	{
+	    unsigned char pixel;
+	    fread(&pixel, 1, 1, file);
+	    rgbPixels[i * 4 + 0] = pixel / max;
+	    rgbPixels[i * 4 + 1] = pixel / max;
+	    rgbPixels[i * 4 + 2] = pixel / max;
+	    rgbPixels[i * 4 + 3] = 1.0;
+	}
+    }
+    else if(token == '6')
+    {
+	for(i = 0; i < width * height; i++)
+	{
+	    unsigned char rgb[3];
+	    fread(rgb, 3, 1, file);
+	    rgbPixels[i * 4 + 0] = rgb[0] / max;
+	    rgbPixels[i * 4 + 1] = rgb[1] / max;
+	    rgbPixels[i * 4 + 2] = rgb[2] / max;
+	    rgbPixels[i * 4 + 3] = 1.0;
+	}
+    }
+    *w = width;
+    *h = height;
+    *pixels = rgbPixels;
+    return 1;
+}
+
 
 void LoadModel(const char *filename)
 {
@@ -1644,15 +1835,43 @@ void LoadModel(const char *filename)
 
     FILE* fp = fopen(filename, "r");
     if(fp == nullptr) {
-        fprintf(stderr, "couldn't open file\n");
+        fprintf(stderr, "couldn't open file %s for reading\n", filename);
         exit(EXIT_FAILURE);
     }
 
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
-    Drawable::Attributes object;
-    ParseTriSrc(fp, vertices, indices, object);
-    drawable = std::make_unique<Drawable>(vertices, indices, object);
+    std::string texture_name;
+    float specular_color[4];
+    float shininess;
+    ParseTriSrc(fp, vertices, indices, texture_name, specular_color, shininess);
+
+    int width = 0, height = 0;
+    float *float_pixels = nullptr;
+    std::vector<uint8_t> rgba8_unorm;
+    if(texture_name != "*") {
+        std::filesystem::path path {filename};
+        std::filesystem::path texture {texture_name};
+        std::filesystem::path texture_path = path.parent_path() / texture;
+        FILE *texture_file = fopen(texture_path.c_str(), "rb");
+        if(texture_file == nullptr) {
+            fprintf(stderr, "couldn't open texture file %s for reading\n", texture_name.c_str());
+            exit(EXIT_FAILURE);
+        }
+        int result = pnmRead(texture_file, &width, &height, &float_pixels);
+        if(!result) {
+            fprintf(stderr, "couldn't read PPM image from %s\n", texture_name.c_str());
+            exit(EXIT_FAILURE);
+        }
+
+        rgba8_unorm.resize(4 * width * height);
+        for(int i = 0; i < width * height * 4; i++) {
+            rgba8_unorm[i] = static_cast<uint8_t>(std::clamp(float_pixels[i] * 255.999f, 0.0f, 255.0f));
+        }
+    }
+
+    drawable = std::make_unique<Drawable>(vertices, indices, specular_color, shininess, width, height, rgba8_unorm);
+    printf("%zd\n", rgba8_unorm.size());
 
     object_translation = drawable->bounds.center() * -1;
     float dim = length(drawable->bounds.dim());
