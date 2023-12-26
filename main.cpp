@@ -684,27 +684,12 @@ struct RGBA8UNormImage
 
 struct Drawable
 {
-    struct Attributes
-    {
-        float specular_color[4];
-        float shininess;
-        std::shared_ptr<RGBA8UNormImage> texture;
-
-        Attributes(float specular_color[4], float shininess, std::shared_ptr<RGBA8UNormImage> texture) :
-            shininess(shininess),
-            texture(texture)
-        {
-            this->specular_color[0] = specular_color[0];
-            this->specular_color[1] = specular_color[1];
-            this->specular_color[2] = specular_color[2];
-            this->specular_color[3] = specular_color[3];
-        }
-    };
-
     aabox bounds;
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
-    Attributes attr;
+    float specular_color[4];
+    float shininess;
+    std::shared_ptr<RGBA8UNormImage> texture;
     int triangleCount;
     constexpr static int VERTEX_BUFFER = 0;
     constexpr static int INDEX_BUFFER = 1;
@@ -715,8 +700,13 @@ struct Drawable
         float specular_color[4], float shininess, std::shared_ptr<RGBA8UNormImage> texture) :
             vertices(vertices),
             indices(indices),
-            attr(specular_color, shininess, texture)
+            shininess(shininess),
+            texture(texture)
     {
+        this->specular_color[0] = specular_color[0];
+        this->specular_color[1] = specular_color[1];
+        this->specular_color[2] = specular_color[2];
+        this->specular_color[3] = specular_color[3];
         triangleCount = static_cast<int>(indices.size() / 3);
         for(uint32_t i = 0; i < vertices.size(); i++) {
             bounds += vertices[i].v;
@@ -1432,8 +1422,8 @@ static void DrawFrame(GLFWwindow *window)
     fragment_uniforms->light_color = light_color;
 
     ShadingUniforms* shading_uniforms = static_cast<ShadingUniforms*>(submission.uniform_buffers[2].mapped);
-    shading_uniforms->specular_color.set(drawable->attr.specular_color); // XXX drops specular_color[3]
-    shading_uniforms->shininess = drawable->attr.shininess;
+    shading_uniforms->specular_color.set(drawable->specular_color); // XXX drops specular_color[3]
+    shading_uniforms->shininess = drawable->shininess;
 
     VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, per_image.image_acquired_semaphore, VK_NULL_HANDLE, &swapchain_index));
 
