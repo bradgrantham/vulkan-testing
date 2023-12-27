@@ -1,6 +1,7 @@
-handle window resize - wait, destroy, recreate per-swapchain data
+Should I be doing descriptor writes at draw time?  Probably.
 texturing
-try a second objct
+handle window resize - wait, destroy, recreate per-swapchain data
+try a second object
 cleanup - why shouldn't there be SUBMISSIONS_IN_FLIGHT count depth images?
 add ImGUI?
 raytracing

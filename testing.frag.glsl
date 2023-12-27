@@ -12,9 +12,12 @@ layout (binding = 2) uniform Shading
     float shininess;
 } shading;
 
+layout (binding = 3) uniform sampler2D color_texture;
+
 layout (location = 0) in vec4 vertex_position;
 layout (location = 1) in vec3 vertex_normal;
 layout (location = 2) in vec4 vertex_color;
+layout (location = 3) in vec2 vertex_texcoord;
 
 layout (location = 0) out vec4 outFragColor;
 
@@ -32,7 +35,8 @@ void main()
     vec3 ambient = ubo2.light_color;
     vec3 specular = pow(max(0, dot(refl, edir)), shading.shininess) * shading.specular_color * ubo2.light_color;
     vec3 material_diffuse = vec3(.8, .8, .8);
+    vec3 texture_color = texture(color_texture, vertex_texcoord).xyz;
     vec3 material_ambient = vec3(.1, .1, .1);
     vec3 material_specular = vec3(.8, .8, .8);
-    outFragColor = vec4(vertex_color.xyz * (diffuse * material_diffuse + ambient * material_ambient + specular * material_specular ), 1.0);
+    outFragColor = vec4(texture_color * vertex_color.xyz * (diffuse * material_diffuse + ambient * material_ambient + specular * material_specular ), 1.0);
 }

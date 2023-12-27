@@ -244,6 +244,16 @@ struct UniformBuffer
     {}
 };
 
+struct ImageSampler
+{
+    uint32_t binding;
+    VkShaderStageFlags stageFlags;
+    ImageSampler(int binding, VkShaderStageFlags stageFlags) :
+        binding(binding),
+        stageFlags(stageFlags)
+    {}
+};
+
 struct ShadingUniforms
 {
     vec3 specular_color;
@@ -686,13 +696,18 @@ struct RGBA8UNormImage
 
 struct Drawable
 {
-    aabox bounds;
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
+    int triangleCount;
+    aabox bounds;
+
     float specular_color[4];
     float shininess;
+
     std::shared_ptr<RGBA8UNormImage> texture;
-    int triangleCount;
+    VkImageView textureImageView { VK_NULL_HANDLE };
+    VkSampler textureSampler { VK_NULL_HANDLE };
+
     constexpr static int VERTEX_BUFFER = 0;
     constexpr static int INDEX_BUFFER = 1;
     typedef std::array<Buffer, 2> DrawableBuffersOnDevice;
@@ -741,6 +756,7 @@ struct Drawable
                 .samples = VK_SAMPLE_COUNT_1_BIT,
                 .tiling = VK_IMAGE_TILING_OPTIMAL,
                 .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+                .initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED,
             };
             VkImage textureImage;
             VK_CHECK(vkCreateImage(device, &createImageInfo, nullptr, &textureImage));
@@ -761,28 +777,99 @@ struct Drawable
             VK_CHECK(vkAllocateMemory(device, &textureAllocate, nullptr, &textureMemory));
             VK_CHECK(vkBindImageMemory(device, textureImage, textureMemory, 0));
         
-            // allocate Memory
-            // bind memory to image
+            uint32_t transfer_queue = FindQueueFamily(physical_device, VK_QUEUE_TRANSFER_BIT);
+            if(transfer_queue == NO_QUEUE_FAMILY) {
+                fprintf(stderr, "couldn't find a transfer queue\n");
+                abort();
+            }
+            VkCommandPool command_pool = GetCommandPool(device, transfer_queue);
+            VkCommandBuffer transfer_commands = GetCommandBuffer(device, command_pool);
 
-            // transition image from VK_IMAGE_LAYOUT_PREINITIALIZED,
-            // to VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-            // from VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT
-            // to VK_PIPELINE_STAGE_TRANSFER_BIT
-            // vkCmdPipelineBarrier
+            BeginCommandBuffer(transfer_commands);
+
+            VkImageMemoryBarrier transfer_dst_optimal {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .srcAccessMask = 0,
+                .dstAccessMask = 0,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .oldLayout = VK_IMAGE_LAYOUT_PREINITIALIZED,
+                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .image = textureImage,
+                .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+            };
+            vkCmdPipelineBarrier(transfer_commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &transfer_dst_optimal);
 
             // Copy buffer to image
-            // vkCmdCopyBufferToImage(... VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL ...)
+            VkBufferImageCopy copy {
+                .bufferOffset = 0,
+                .bufferRowLength = static_cast<uint32_t>(texture->width),
+                .bufferImageHeight = static_cast<uint32_t>(texture->height),
+                .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+                .imageOffset = {0, 0, 0},
+                .imageExtent = {static_cast<uint32_t>(texture->width), static_cast<uint32_t>(texture->height), 1},
+            };
 
-            // transition image from VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL
-            // to VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
-            // from VK_PIPELINE_STAGE_TRANSFER_BIT 
-            // to VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT
-            // vkCmdPipelineBarrier
+            vkCmdCopyBufferToImage(transfer_commands, staging_buffer.buf, textureImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
 
-            // create VkSampler
-            // create VkImageView
+            VkImageMemoryBarrier shader_read_optimal {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+                .srcAccessMask = 0,
+                .dstAccessMask = 0,
+                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+                .image = textureImage,
+                .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+            };
+            vkCmdPipelineBarrier(transfer_commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &shader_read_optimal);
 
-            // Sampler and ImageView are descriptor sets that are written 
+            VK_CHECK(vkEndCommandBuffer(transfer_commands));
+
+            FlushCommandBuffer(device, queue, transfer_commands);
+            vkFreeCommandBuffers(device, command_pool, 1, &transfer_commands);
+            vkDestroyBuffer(device, staging_buffer.buf, nullptr);
+            vkFreeMemory(device, staging_buffer.mem, nullptr);
+            vkDestroyCommandPool(device, command_pool, nullptr);
+
+            VkSamplerCreateInfo create_sampler {
+                .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+                .flags = 0,
+                .magFilter = VK_FILTER_LINEAR,
+                .minFilter = VK_FILTER_LINEAR,
+                .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
+                .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+                .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+                .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
+                .mipLodBias = 0.0f,
+                .anisotropyEnable = VK_FALSE,
+                .maxAnisotropy = 0.0f,
+                .compareEnable = VK_FALSE,
+                .compareOp = VK_COMPARE_OP_ALWAYS,
+                .minLod = 0,
+                .maxLod = 0, // VK_LOD_CLAMP_NONE,
+                // .borderColor
+                .unnormalizedCoordinates = VK_FALSE,
+            };
+            VK_CHECK(vkCreateSampler(device, &create_sampler, nullptr, &textureSampler));
+
+            VkImageViewCreateInfo imageViewCreate {
+                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+                .flags = 0,
+                .image = textureImage,
+                .viewType = VK_IMAGE_VIEW_TYPE_2D,
+                .format = texture->GetVulkanFormat(),
+                .components{VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY},
+                .subresourceRange{
+                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+                    .baseMipLevel = 0,
+                    .levelCount = 1,
+                    .baseArrayLayer = 0,
+                    .layerCount = 1
+                },
+            };
+            VK_CHECK(vkCreateImageView(device, &imageViewCreate, nullptr, &textureImageView));
         }
 
         // Geometry
@@ -842,6 +929,7 @@ VkSwapchainKHR swapchain;
 VkCommandPool command_pool;
 VkQueue queue;
 std::vector<UniformBuffer> uniforms;
+std::vector<ImageSampler> samplers;
 
 // In flight rendering stuff
 int submission_index = 0;
@@ -957,6 +1045,27 @@ void CreatePerSubmissionData()
             vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, nullptr);
 
             which++;
+        }
+
+        assert(samplers.size() == 1); // XXX only one texture and one drawable at the moment
+        for(const auto& sampler: samplers) {
+            VkDescriptorImageInfo image_info {
+                .sampler = drawable->textureSampler,
+                .imageView = drawable->textureImageView,
+                .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            };
+            VkWriteDescriptorSet write_descriptor_set {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+                .dstSet = submission.descriptor_set,
+                .dstBinding = sampler.binding,
+                .dstArrayElement = 0,
+                .descriptorCount = 1,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .pImageInfo = &image_info,
+                .pBufferInfo = nullptr,
+                .pTexelBufferView = nullptr,
+            };
+            vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, nullptr);
         }
     }
 }
@@ -1090,6 +1199,7 @@ void InitializeState(int windowWidth, int windowHeight)
     uniforms.push_back({0, VK_SHADER_STAGE_VERTEX_BIT, sizeof(VertexUniforms)});
     uniforms.push_back({1, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(FragmentUniforms)});
     uniforms.push_back({2, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(ShadingUniforms)});
+    samplers.push_back({3, VK_SHADER_STAGE_FRAGMENT_BIT});
 
     std::vector<VkDescriptorSetLayoutBinding> layout_bindings;
     for(const auto& uniform: uniforms) {
@@ -1102,14 +1212,27 @@ void InitializeState(int windowWidth, int windowHeight)
         };
         layout_bindings.push_back(binding);
     }
+    for(const auto& sampler: samplers) {
+        VkDescriptorSetLayoutBinding binding {
+            .binding = sampler.binding,
+            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+            .descriptorCount = 1,
+            .stageFlags = sampler.stageFlags,
+            .pImmutableSamplers = nullptr,
+        };
+        layout_bindings.push_back(binding);
+    }
 
-    VkDescriptorPoolSize pool_sizes { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(layout_bindings.size()) * SUBMISSIONS_IN_FLIGHT };
+    VkDescriptorPoolSize pool_sizes[] {
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(uniforms.size()) * SUBMISSIONS_IN_FLIGHT },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(samplers.size()) * SUBMISSIONS_IN_FLIGHT },
+    };
     VkDescriptorPoolCreateInfo create_descriptor_pool {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .flags = 0,
         .maxSets = SUBMISSIONS_IN_FLIGHT,
-        .poolSizeCount = 1,
-        .pPoolSizes = &pool_sizes,
+        .poolSizeCount = std::size(pool_sizes),
+        .pPoolSizes = pool_sizes,
     };
     VK_CHECK(vkCreateDescriptorPool(device, &create_descriptor_pool, nullptr, &descriptor_pool));
 
@@ -1120,6 +1243,8 @@ void InitializeState(int windowWidth, int windowHeight)
         .pBindings = layout_bindings.data(),
     };
     VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptor_set_layout_create, nullptr, &descriptor_set_layout));
+
+    drawable->CreateDeviceData(physical_device, device, queue);
 
     CreatePerSubmissionData();
 
@@ -1266,8 +1391,6 @@ void InitializeState(int windowWidth, int windowHeight)
         };
         VK_CHECK(vkCreateFramebuffer(device, &framebufferCreate, nullptr, &per_swapchainimage[i].framebuffer));
     }
-
-    drawable->CreateDeviceData(physical_device, device, queue);
 
     // Create a graphics pipeline
     VkVertexInputBindingDescription vertex_input_binding {
@@ -1849,7 +1972,6 @@ int pnmRead(FILE *file, int *w, int *h, float **pixels)
     return 1;
 }
 
-
 void LoadModel(const char *filename)
 {
     using namespace VulkanApp;
@@ -1868,7 +1990,16 @@ void LoadModel(const char *filename)
     ParseTriSrc(fp, vertices, indices, texture_name, specular_color, shininess);
 
     std::shared_ptr<RGBA8UNormImage> texture;
-    if(texture_name != "*") {
+
+    if(texture_name == "*") {
+
+        // XXX Need a way to have no texture at some point
+        int width = 1, height = 1;
+        std::vector<uint8_t> rgba8_unorm = {255, 255, 255, 255};
+        texture = std::make_shared<RGBA8UNormImage>(width, height, rgba8_unorm);
+
+    } else {
+
         std::filesystem::path path {filename};
         std::filesystem::path texture_path = path.parent_path() / texture_name;
         FILE *texture_file = fopen(texture_path.c_str(), "rb");
@@ -1887,10 +2018,16 @@ void LoadModel(const char *filename)
         }
 
         rgba8_unorm.resize(4 * width * height);
-        for(int i = 0; i < width * height * 4; i++) {
-            rgba8_unorm[i] = static_cast<uint8_t>(std::clamp(float_pixels[i] * 255.999f, 0.0f, 255.0f));
+        for(int y = 0; y < height; y++) {
+            for(int x = 0; x < width; x++) {
+                for(int c = 0; c < 4; c++) {
+                    rgba8_unorm[c + (x + y * width) * 4] = static_cast<uint8_t>(std::clamp(float_pixels[c + (x + (height - y - 1) * width) * 4] * 255.999f, 0.0f, 255.0f));
+                    // rgba8_unorm[c + (x + y * width) * 4] = static_cast<uint8_t>(std::clamp(float_pixels[c + (x + y * width) * 4] * 255.999f, 0.0f, 255.0f));
+                }
+            }
         }
         texture = std::make_shared<RGBA8UNormImage>(width, height, rgba8_unorm);
+
     }
 
     drawable = std::make_unique<Drawable>(vertices, indices, specular_color, shininess, texture);
