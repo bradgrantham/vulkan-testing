@@ -680,17 +680,126 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
     vkDestroyCommandPool(device, command_pool, nullptr);
 }
 
+template <class TEXTURE>
+void CreateDeviceTextureImage(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue, TEXTURE texture, VkImage* textureImage, VkDeviceMemory* textureMemory)
+{
+    VkFormatProperties format_properties;
+    vkGetPhysicalDeviceFormatProperties(physical_device, texture->GetVulkanFormat(), &format_properties);
+
+    Buffer staging_buffer;
+    staging_buffer.Create(physical_device, device, texture->GetSize(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VK_CHECK(vkMapMemory(device, staging_buffer.mem, 0, texture->GetSize(), 0, &staging_buffer.mapped));
+    memcpy(staging_buffer.mapped, texture->GetData(), texture->GetSize());
+    vkUnmapMemory(device, staging_buffer.mem);
+
+    // Create an image for the texture with VK_IMAGE_TILING_OPTIMAL,
+    // VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+    // VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
+    VkImageCreateInfo createImageInfo {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
+        .flags = 0,
+        .imageType = VK_IMAGE_TYPE_2D,
+        .format = texture->GetVulkanFormat(),
+        .extent{static_cast<uint32_t>(texture->GetWidth()), static_cast<uint32_t>(texture->GetHeight()), 1},
+        .mipLevels = 1,
+        .arrayLayers = 1,
+        .samples = VK_SAMPLE_COUNT_1_BIT,
+        .tiling = VK_IMAGE_TILING_OPTIMAL,
+        .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED,
+    };
+    VK_CHECK(vkCreateImage(device, &createImageInfo, nullptr, textureImage));
+
+    VkMemoryRequirements textureMemReqs;
+    vkGetImageMemoryRequirements(device, *textureImage, &textureMemReqs);
+
+    VkPhysicalDeviceMemoryProperties memory_properties;
+    vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+
+    uint32_t memoryTypeIndex = getMemoryTypeIndex(memory_properties, textureMemReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    VkMemoryAllocateInfo textureAllocate {
+        .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
+        .allocationSize = textureMemReqs.size,
+        .memoryTypeIndex = memoryTypeIndex,
+    };
+    VK_CHECK(vkAllocateMemory(device, &textureAllocate, nullptr, textureMemory));
+    VK_CHECK(vkBindImageMemory(device, *textureImage, *textureMemory, 0));
+
+    uint32_t transfer_queue = FindQueueFamily(physical_device, VK_QUEUE_TRANSFER_BIT);
+    if(transfer_queue == NO_QUEUE_FAMILY) {
+        fprintf(stderr, "couldn't find a transfer queue\n");
+        abort();
+    }
+    VkCommandPool command_pool = GetCommandPool(device, transfer_queue);
+    VkCommandBuffer transfer_commands = GetCommandBuffer(device, command_pool);
+
+    BeginCommandBuffer(transfer_commands);
+
+    VkImageMemoryBarrier transfer_dst_optimal {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask = 0,
+        .dstAccessMask = 0,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .oldLayout = VK_IMAGE_LAYOUT_PREINITIALIZED,
+        .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .image = *textureImage,
+        .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+    };
+    vkCmdPipelineBarrier(transfer_commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &transfer_dst_optimal);
+
+    // Copy buffer to image
+    VkBufferImageCopy copy {
+        .bufferOffset = 0,
+        .bufferRowLength = static_cast<uint32_t>(texture->GetWidth()),
+        .bufferImageHeight = static_cast<uint32_t>(texture->GetHeight()),
+        .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+        .imageOffset = {0, 0, 0},
+        .imageExtent = {static_cast<uint32_t>(texture->GetWidth()), static_cast<uint32_t>(texture->GetHeight()), 1},
+    };
+
+    vkCmdCopyBufferToImage(transfer_commands, staging_buffer.buf, *textureImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
+
+    VkImageMemoryBarrier shader_read_optimal {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+        .srcAccessMask = 0,
+        .dstAccessMask = 0,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        .image = *textureImage,
+        .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
+    };
+    vkCmdPipelineBarrier(transfer_commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &shader_read_optimal);
+
+    VK_CHECK(vkEndCommandBuffer(transfer_commands));
+
+    FlushCommandBuffer(device, queue, transfer_commands);
+    vkFreeCommandBuffers(device, command_pool, 1, &transfer_commands);
+    vkDestroyBuffer(device, staging_buffer.buf, nullptr);
+    vkFreeMemory(device, staging_buffer.mem, nullptr);
+    vkDestroyCommandPool(device, command_pool, nullptr);
+}
+
 struct RGBA8UNormImage
 {
+private:
     int width;
     int height;
     std::vector<uint8_t> rgba8_unorm;
+
+public:
     RGBA8UNormImage(int width, int height, std::vector<uint8_t>& rgba8_unorm) :
         width(width),
         height(height),
         rgba8_unorm(std::move(rgba8_unorm))
     {}
+
     VkFormat GetVulkanFormat() { return VK_FORMAT_R8G8B8A8_UNORM; }
+    int GetWidth() { return width; }
+    int GetHeight() { return height; }
+    void* GetData() { return rgba8_unorm.data(); }
     size_t GetSize() { return rgba8_unorm.size(); }
 };
 
@@ -705,6 +814,8 @@ struct Drawable
     float shininess;
 
     std::shared_ptr<RGBA8UNormImage> texture;
+    VkImage textureImage { VK_NULL_HANDLE };
+    VkDeviceMemory textureMemory { VK_NULL_HANDLE };
     VkImageView textureImageView { VK_NULL_HANDLE };
     VkSampler textureSampler { VK_NULL_HANDLE };
 
@@ -733,105 +844,7 @@ struct Drawable
     void CreateDeviceData(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue)
     {
         if(texture) {
-            VkFormatProperties format_properties;
-            vkGetPhysicalDeviceFormatProperties(physical_device, texture->GetVulkanFormat(), &format_properties);
-
-            Buffer staging_buffer;
-            staging_buffer.Create(physical_device, device, texture->GetSize(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-            VK_CHECK(vkMapMemory(device, staging_buffer.mem, 0, texture->GetSize(), 0, &staging_buffer.mapped));
-            memcpy(staging_buffer.mapped, texture->rgba8_unorm.data(), texture->GetSize());
-            vkUnmapMemory(device, staging_buffer.mem);
-
-            // Create an image for the texture with VK_IMAGE_TILING_OPTIMAL,
-            // VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-            // VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT
-            VkImageCreateInfo createImageInfo {
-                .sType = VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO,
-                .flags = 0,
-                .imageType = VK_IMAGE_TYPE_2D,
-                .format = texture->GetVulkanFormat(),
-                .extent{static_cast<uint32_t>(texture->width), static_cast<uint32_t>(texture->height), 1},
-                .mipLevels = 1,
-                .arrayLayers = 1,
-                .samples = VK_SAMPLE_COUNT_1_BIT,
-                .tiling = VK_IMAGE_TILING_OPTIMAL,
-                .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
-                .initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED,
-            };
-            VkImage textureImage;
-            VK_CHECK(vkCreateImage(device, &createImageInfo, nullptr, &textureImage));
-
-            VkMemoryRequirements textureMemReqs;
-            vkGetImageMemoryRequirements(device, textureImage, &textureMemReqs);
-
-            VkPhysicalDeviceMemoryProperties memory_properties;
-            vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
-
-            uint32_t memoryTypeIndex = getMemoryTypeIndex(memory_properties, textureMemReqs.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-            VkDeviceMemory textureMemory;
-            VkMemoryAllocateInfo textureAllocate {
-                .sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO,
-                .allocationSize = textureMemReqs.size,
-                .memoryTypeIndex = memoryTypeIndex,
-            };
-            VK_CHECK(vkAllocateMemory(device, &textureAllocate, nullptr, &textureMemory));
-            VK_CHECK(vkBindImageMemory(device, textureImage, textureMemory, 0));
-        
-            uint32_t transfer_queue = FindQueueFamily(physical_device, VK_QUEUE_TRANSFER_BIT);
-            if(transfer_queue == NO_QUEUE_FAMILY) {
-                fprintf(stderr, "couldn't find a transfer queue\n");
-                abort();
-            }
-            VkCommandPool command_pool = GetCommandPool(device, transfer_queue);
-            VkCommandBuffer transfer_commands = GetCommandBuffer(device, command_pool);
-
-            BeginCommandBuffer(transfer_commands);
-
-            VkImageMemoryBarrier transfer_dst_optimal {
-                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                .srcAccessMask = 0,
-                .dstAccessMask = 0,
-                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .oldLayout = VK_IMAGE_LAYOUT_PREINITIALIZED,
-                .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                .image = textureImage,
-                .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
-            };
-            vkCmdPipelineBarrier(transfer_commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &transfer_dst_optimal);
-
-            // Copy buffer to image
-            VkBufferImageCopy copy {
-                .bufferOffset = 0,
-                .bufferRowLength = static_cast<uint32_t>(texture->width),
-                .bufferImageHeight = static_cast<uint32_t>(texture->height),
-                .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-                .imageOffset = {0, 0, 0},
-                .imageExtent = {static_cast<uint32_t>(texture->width), static_cast<uint32_t>(texture->height), 1},
-            };
-
-            vkCmdCopyBufferToImage(transfer_commands, staging_buffer.buf, textureImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
-
-            VkImageMemoryBarrier shader_read_optimal {
-                .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
-                .srcAccessMask = 0,
-                .dstAccessMask = 0,
-                .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-                .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-                .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-                .image = textureImage,
-                .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
-            };
-            vkCmdPipelineBarrier(transfer_commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, 0, 0, nullptr, 0, nullptr, 1, &shader_read_optimal);
-
-            VK_CHECK(vkEndCommandBuffer(transfer_commands));
-
-            FlushCommandBuffer(device, queue, transfer_commands);
-            vkFreeCommandBuffers(device, command_pool, 1, &transfer_commands);
-            vkDestroyBuffer(device, staging_buffer.buf, nullptr);
-            vkFreeMemory(device, staging_buffer.mem, nullptr);
-            vkDestroyCommandPool(device, command_pool, nullptr);
+            CreateDeviceTextureImage(physical_device, device, queue, texture, &textureImage, &textureMemory);
 
             VkSamplerCreateInfo create_sampler {
                 .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
@@ -860,7 +873,7 @@ struct Drawable
                 .image = textureImage,
                 .viewType = VK_IMAGE_VIEW_TYPE_2D,
                 .format = texture->GetVulkanFormat(),
-                .components{VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY},
+                .components {VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY},
                 .subresourceRange{
                     .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
                     .baseMipLevel = 0,
@@ -1762,6 +1775,7 @@ bool ParseTriSrc(FILE *fp, std::vector<Vertex>& vertices, std::vector<uint32_t>&
 {
     char texture_name_c_str[512];
     char tag_name_c_str[512];
+
     // XXX each triangle can reference a texture, but I ignore all but the last in this hacked parser
     while(fscanf(fp,"\"%[^\"]\"", texture_name_c_str) == 1) {
 	if(fscanf(fp,"%s ", tag_name_c_str) != 1) {
