@@ -512,6 +512,54 @@ void CreateDevice(VkPhysicalDevice physical_device, const std::vector<const char
     VK_CHECK(vkCreateDevice(physical_device, &create, nullptr, device));
 }
 
+VkSampler CreateSampler(VkDevice device, VkSamplerMipmapMode mipMode, VkSamplerAddressMode wrapMode)
+{
+    VkSamplerCreateInfo create_sampler {
+        .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
+        .flags = 0,
+        .magFilter = VK_FILTER_LINEAR,
+        .minFilter = VK_FILTER_LINEAR,
+        .mipmapMode = mipMode,
+        .addressModeU = wrapMode,
+        .addressModeV = wrapMode,
+        .addressModeW = wrapMode,
+        .mipLodBias = 0.0f,
+        .anisotropyEnable = VK_FALSE,
+        .maxAnisotropy = 0.0f,
+        .compareEnable = VK_FALSE,
+        .compareOp = VK_COMPARE_OP_ALWAYS,
+        .minLod = 0,
+        .maxLod = VK_LOD_CLAMP_NONE,
+        // .borderColor
+        .unnormalizedCoordinates = VK_FALSE,
+    };
+    VkSampler textureSampler;
+    VK_CHECK(vkCreateSampler(device, &create_sampler, nullptr, &textureSampler));
+    return textureSampler;
+}
+
+VkImageView CreateImageView(VkDevice device, VkFormat format, VkImage image, VkImageAspectFlags aspect)
+{
+    VkImageViewCreateInfo imageViewCreate {
+        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
+        .flags = 0,
+        .image = image,
+        .viewType = VK_IMAGE_VIEW_TYPE_2D,
+        .format = format,
+        .components {VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY},
+        .subresourceRange{
+            .aspectMask = aspect,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1
+        },
+    };
+    VkImageView imageView;
+    VK_CHECK(vkCreateImageView(device, &imageViewCreate, nullptr, &imageView));
+    return imageView;
+}
+
 void PrintImplementationInformation()
 {
     uint32_t ext_count;
@@ -814,6 +862,7 @@ struct Drawable
     float shininess;
 
     std::shared_ptr<RGBA8UNormImage> texture;
+
     VkImage textureImage { VK_NULL_HANDLE };
     VkDeviceMemory textureMemory { VK_NULL_HANDLE };
     VkImageView textureImageView { VK_NULL_HANDLE };
@@ -845,49 +894,11 @@ struct Drawable
     {
         if(texture) {
             CreateDeviceTextureImage(physical_device, device, queue, texture, &textureImage, &textureMemory);
-
-            VkSamplerCreateInfo create_sampler {
-                .sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO,
-                .flags = 0,
-                .magFilter = VK_FILTER_LINEAR,
-                .minFilter = VK_FILTER_LINEAR,
-                .mipmapMode = VK_SAMPLER_MIPMAP_MODE_NEAREST,
-                .addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-                .addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-                .addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT,
-                .mipLodBias = 0.0f,
-                .anisotropyEnable = VK_FALSE,
-                .maxAnisotropy = 0.0f,
-                .compareEnable = VK_FALSE,
-                .compareOp = VK_COMPARE_OP_ALWAYS,
-                .minLod = 0,
-                .maxLod = 0, // VK_LOD_CLAMP_NONE,
-                // .borderColor
-                .unnormalizedCoordinates = VK_FALSE,
-            };
-            VK_CHECK(vkCreateSampler(device, &create_sampler, nullptr, &textureSampler));
-
-            VkImageViewCreateInfo imageViewCreate {
-                .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-                .flags = 0,
-                .image = textureImage,
-                .viewType = VK_IMAGE_VIEW_TYPE_2D,
-                .format = texture->GetVulkanFormat(),
-                .components {VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY},
-                .subresourceRange{
-                    .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                    .baseMipLevel = 0,
-                    .levelCount = 1,
-                    .baseArrayLayer = 0,
-                    .layerCount = 1
-                },
-            };
-            VK_CHECK(vkCreateImageView(device, &imageViewCreate, nullptr, &textureImageView));
+            textureSampler = CreateSampler(device, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT);
+            textureImageView = CreateImageView(device, texture->GetVulkanFormat(), textureImage, VK_IMAGE_ASPECT_COLOR_BIT);
         }
 
-        // Geometry
-        Buffer vertex_buffer;
-        Buffer index_buffer;
+        Buffer vertex_buffer, index_buffer;
         CreateGeometryBuffers(physical_device, device, queue, vertices, indices, &vertex_buffer, &index_buffer);
         buffers_by_device.insert({device, {vertex_buffer, index_buffer}});
     }
@@ -1188,22 +1199,7 @@ void InitializeState(int windowWidth, int windowHeight)
 
     std::vector<VkImageView> colorImageViews(swapchain_image_count);
     for(uint32_t i = 0; i < colorImageViews.size(); i++) {
-        VkImageViewCreateInfo colorImageViewCreate {
-            .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-            .flags = 0,
-            .image = per_swapchainimage[i].image,
-            .viewType = VK_IMAGE_VIEW_TYPE_2D,
-            .format = chosenFormat,
-            .components{VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY},
-            .subresourceRange{
-                .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
-                .baseMipLevel = 0,
-                .levelCount = 1,
-                .baseArrayLayer = 0,
-                .layerCount = 1
-            },
-        };
-        VK_CHECK(vkCreateImageView(device, &colorImageViewCreate, nullptr, &colorImageViews[i]));
+        colorImageViews[i] = CreateImageView(device, chosenFormat, per_swapchainimage[i].image, VK_IMAGE_ASPECT_COLOR_BIT);
     }
 
     // XXX Should probe these from shader code somehow
@@ -1294,22 +1290,7 @@ void InitializeState(int windowWidth, int windowHeight)
     VK_CHECK(vkBindImageMemory(device, depthImage, depthImageMemory, 0));
 
     VkImageView depthImageView;
-    VkImageViewCreateInfo depthImageViewCreate {
-        .sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO,
-        .flags = 0,
-        .image = depthImage,
-        .viewType = VK_IMAGE_VIEW_TYPE_2D,
-        .format = depthFormat,
-        .components{VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY,VK_COMPONENT_SWIZZLE_IDENTITY},
-        .subresourceRange{
-            .aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT,
-            .baseMipLevel = 0,
-            .levelCount = 1,
-            .baseArrayLayer = 0,
-            .layerCount = 1
-        },
-    };
-    VK_CHECK(vkCreateImageView(device, &depthImageViewCreate, nullptr, &depthImageView));
+    depthImageView = CreateImageView(device, depthFormat, depthImage, VK_IMAGE_ASPECT_DEPTH_BIT | VK_IMAGE_ASPECT_STENCIL_BIT);
 
 // rendering stuff - pipelines, binding & drawing commands
 
