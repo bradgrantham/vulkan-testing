@@ -67,7 +67,7 @@ std::map<VkResult, std::string> MapVkResultToName =
 }
 
 // From vkcube.cpp
-static VkSurfaceFormatKHR PickSurfaceFormat(const VkSurfaceFormatKHR *surfaceFormats, uint32_t count)
+VkSurfaceFormatKHR PickSurfaceFormat(const VkSurfaceFormatKHR *surfaceFormats, uint32_t count)
 {
     // Prefer non-SRGB formats...
     for (uint32_t i = 0; i < count; i++) {
@@ -275,8 +275,9 @@ struct FragmentUniforms
     float pad2;
 };
 
-void CreateInstance(VkInstance* instance, bool enableValidation)
+VkInstance CreateInstance(bool enableValidation)
 {
+    VkInstance instance;
     std::set<std::string> extension_set;
     std::set<std::string> layer_set;
 
@@ -333,22 +334,22 @@ void CreateInstance(VkInstance* instance, bool enableValidation)
             .ppEnabledExtensionNames = extensions.data(),
         };
 
-	VK_CHECK(vkCreateInstance(&create, nullptr, instance));
+	VK_CHECK(vkCreateInstance(&create, nullptr, &instance));
 
     }(extension_set, layer_set);
+
+    return instance;
 }
 
-void ChoosePhysicalDevice(VkInstance instance, VkPhysicalDevice* physical_device, bool beVerbose)
+VkPhysicalDevice ChoosePhysicalDevice(VkInstance instance)
 {
     uint32_t gpu_count = 0;
     VK_CHECK(vkEnumeratePhysicalDevices(instance, &gpu_count, nullptr));
-    if(beVerbose) {
-        std::cerr << gpu_count << " gpus enumerated\n";
-    }
-    VkPhysicalDevice physical_devices[32];
-    gpu_count = std::min(32u, gpu_count);
-    VK_CHECK(vkEnumeratePhysicalDevices(instance, &gpu_count, physical_devices));
-    *physical_device = physical_devices[0];
+
+    std::vector<VkPhysicalDevice> physical_devices(gpu_count);
+    VK_CHECK(vkEnumeratePhysicalDevices(instance, &gpu_count, physical_devices.data()));
+
+    return physical_devices[0];
 }
 
 const char* DeviceTypeDescriptions[] = {
@@ -428,7 +429,7 @@ void PrintDeviceInformation(VkPhysicalDevice physical_device, VkPhysicalDeviceMe
     }
 }
 
-static std::vector<uint8_t> GetFileContents(FILE *fp)
+std::vector<uint8_t> GetFileContents(FILE *fp)
 {
     long int start = ftell(fp);
     fseek(fp, 0, SEEK_END);
@@ -489,7 +490,7 @@ VkViewport CalculateViewport(uint32_t windowWidth, uint32_t windowHeight)
     return viewport;
 }
 
-void CreateDevice(VkPhysicalDevice physical_device, const std::vector<const char*>& extensions, uint32_t queue_family, VkDevice* device)
+VkDevice CreateDevice(VkPhysicalDevice physical_device, const std::vector<const char*>& extensions, uint32_t queue_family)
 {
     float queue_priorities = 1.0f;
 
@@ -509,7 +510,9 @@ void CreateDevice(VkPhysicalDevice physical_device, const std::vector<const char
         .enabledExtensionCount = static_cast<uint32_t>(extensions.size()),
         .ppEnabledExtensionNames = extensions.data(),
     };
-    VK_CHECK(vkCreateDevice(physical_device, &create, nullptr, device));
+    VkDevice device;
+    VK_CHECK(vkCreateDevice(physical_device, &create, nullptr, &device));
+    return device;
 }
 
 VkSampler CreateSampler(VkDevice device, VkSamplerMipmapMode mipMode, VkSamplerAddressMode wrapMode)
@@ -939,9 +942,9 @@ std::vector<VkImage> GetSwapchainImages(VkDevice device, VkSwapchainKHR swapchai
 namespace VulkanApp
 {
 
+float frame = 0.0;
 bool beVerbose = true;
 bool enableValidation = false;
-bool do_the_wrong_thing = false;
 
 // non-frame stuff - instance, queue, device, ...?
 VkInstance instance;
@@ -1010,7 +1013,7 @@ void InitializeInstance()
     if (beVerbose) {
         PrintImplementationInformation();
     }
-    CreateInstance(&instance, enableValidation);
+    instance = CreateInstance(enableValidation);
 }
 
 void CreatePerSubmissionData()
@@ -1097,7 +1100,7 @@ void CreatePerSubmissionData()
 void InitializeState(int windowWidth, int windowHeight)
 {
     // non-frame stuff
-    ChoosePhysicalDevice(instance, &physical_device, beVerbose);
+    physical_device = ChoosePhysicalDevice(instance);
 
     graphics_queue_family = FindQueueFamily(physical_device, VK_QUEUE_GRAPHICS_BIT);
     if(graphics_queue_family == NO_QUEUE_FAMILY) {
@@ -1133,7 +1136,7 @@ void InitializeState(int windowWidth, int windowHeight)
         }
     }
 
-    CreateDevice(physical_device, deviceExtensions, graphics_queue_family, &device);
+    device = CreateDevice(physical_device, deviceExtensions, graphics_queue_family);
     vkGetDeviceQueue(device, graphics_queue_family, 0, &queue);
 
     VkCommandPoolCreateInfo create_command_pool {
@@ -1523,7 +1526,7 @@ void Cleanup()
     drawable->ReleaseDeviceData(device);
 }
 
-static void DrawFrame(GLFWwindow *window)
+void DrawFrame(GLFWwindow *window)
 {
     int windowWidth, windowHeight;
     glfwGetWindowSize(window, &windowWidth, &windowHeight);
@@ -1534,7 +1537,6 @@ static void DrawFrame(GLFWwindow *window)
     VK_CHECK(vkWaitForFences(device, 1, &submission.draw_completed_fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
     VK_CHECK(vkResetFences(device, 1, &submission.draw_completed_fence));
 
-    [[maybe_unused]] static float frame = 0.0;
     frame += 1;
 
     mat4f modelview = ObjectManip.m_matrix;
@@ -2049,7 +2051,6 @@ int main(int argc, char **argv)
 
     beVerbose = (getenv("BE_NOISY") != nullptr);
     enableValidation = (getenv("VALIDATE") != nullptr);
-    do_the_wrong_thing = (getenv("BE_WRONG") != nullptr);
 
     const char *progName = argv[0];
     argv++;
