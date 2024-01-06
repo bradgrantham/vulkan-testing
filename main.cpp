@@ -205,6 +205,8 @@ struct Buffer
 
         device = device_;
 
+        device = device_;
+
         VkBufferCreateInfo create_buffer {
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
             .size = size,
@@ -1586,16 +1588,16 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
     int32_t width = surfcaps.currentExtent.width;
     int32_t height = surfcaps.currentExtent.height;
 
-    size_t required_size = width * height;
-    if(required_size > image_data.size()) {
-        image_data.resize(required_size);
+    size_t image_size = width * height * 4;
+    if(image_size > image_data.size()) {
+        image_data.resize(image_size);
     }
 
     for(int y = 0; y < height; y++) {
         for(int x = 0; x < width; x++) {
             // XXX make this centered
-            float u = (x / (float)width) * 2.0f - 1.0f;
-            float v = ((height - y - 1) / (float)height) * 2.0f - 1.0f;
+            float u = ((x + .5f) / (float)width) * 2.0f - 1.0f;
+            float v = ((height - (y + .5f) - 1) / (float)height) * 2.0f - 1.0f;
             vec3 o{0, 0, 0};
             vec3 d{u, v, 1};
             ray eye_ray{o, d};
@@ -1622,15 +1624,14 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
         }
     }
 
-    // XXX this is probably very inefficient - every frame makes a buffer,
-    // copies into the buffer, then makes and image, copies into the
-    // image, then copies that image to the swapchain image.  Should
-    // make the staging buffer on demand and should skip the middle
-    // image
-    VkImage image;
-    VkDeviceMemory memory;
-    ImageDataWrapper imagewrapper(image_data, width, height);
-    CreateDeviceTextureImage(physical_device, device, queue, &imagewrapper, &image, &memory, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+    // XXX Should make the staging buffer on demand
+
+    Buffer staging_buffer;
+    staging_buffer.Create(physical_device, device, image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+    VK_CHECK(vkMapMemory(device, staging_buffer.mem, 0, image_size, 0, &staging_buffer.mapped));
+    memcpy(staging_buffer.mapped, image_data.data(), image_size);
+    vkUnmapMemory(device, staging_buffer.mem);
+    staging_buffer.mapped = nullptr;
 
     auto& submission = submissions[submission_index];
 
@@ -1676,24 +1677,17 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
     };
     vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &transfer_dst_optimal);
 
-#if 0
-    VkImageCopy image_copy {
-        .srcSubresource {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-        .srcOffset {0, 0, 0},
-        .dstSubresource {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-        .dstOffset {0, 0, 0},
-        .extent = {width, height, 1},
+    // Copy buffer to image
+    VkBufferImageCopy copy {
+        .bufferOffset = 0,
+        .bufferRowLength = static_cast<uint32_t>(width),
+        .bufferImageHeight = static_cast<uint32_t>(height),
+        .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
+        .imageOffset = {0, 0, 0},
+        .imageExtent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1},
     };
-    vkCmdCopyImage(cb, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, per_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &image_copy);
-#else
-    VkImageBlit image_blit {
-        .srcSubresource {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-        .srcOffsets { {0, 0, 0}, {width, height, 1} },
-        .dstSubresource {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
-        .dstOffsets { {0, 0, 0}, {width, height, 1} },
-    };
-    vkCmdBlitImage(cb, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, per_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &image_blit, VK_FILTER_NEAREST);
-#endif
+
+    vkCmdCopyBufferToImage(cb, staging_buffer.buf, per_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
 
     VkImageMemoryBarrier present_src {
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -1751,8 +1745,7 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
 
     per_image.layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
-    vkFreeMemory(device, memory, nullptr); // Could put these in per_image and then wouldn't wait every frame
-    vkDestroyImage(device, image, nullptr);
+    staging_buffer.Release();
 
     submission_index = (submission_index + 1) % submissions.size();
     swapchainimage_semaphore_index = (swapchainimage_semaphore_index + 1) % swapchainimage_semaphores.size();
