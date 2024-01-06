@@ -205,8 +205,6 @@ struct Buffer
 
         device = device_;
 
-        device = device_;
-
         VkBufferCreateInfo create_buffer {
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
             .size = size,
@@ -1581,18 +1579,22 @@ struct ImageDataWrapper
 
 void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
 {
-    static std::vector<uint8_t> image_data;
-
     VkSurfaceCapabilitiesKHR surfcaps;
     VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &surfcaps));
     int32_t width = surfcaps.currentExtent.width;
     int32_t height = surfcaps.currentExtent.height;
 
+    static Buffer staging_buffer;
+    static size_t previous_size = 0;
+
     size_t image_size = width * height * 4;
-    if(image_size > image_data.size()) {
-        image_data.resize(image_size);
+    if(image_size > previous_size) {
+        staging_buffer.Create(physical_device, device, image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+        VK_CHECK(vkMapMemory(device, staging_buffer.mem, 0, image_size, 0, &staging_buffer.mapped));
+        previous_size = image_size;
     }
 
+    uint8_t* image_data = static_cast<uint8_t*>(staging_buffer.mapped);
     for(int y = 0; y < height; y++) {
         for(int x = 0; x < width; x++) {
             // XXX make this centered
@@ -1624,16 +1626,13 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
         }
     }
 
-    // XXX Should make the staging buffer on demand
-
-    Buffer staging_buffer;
-    staging_buffer.Create(physical_device, device, image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    VK_CHECK(vkMapMemory(device, staging_buffer.mem, 0, image_size, 0, &staging_buffer.mapped));
-    memcpy(staging_buffer.mapped, image_data.data(), image_size);
-    vkUnmapMemory(device, staging_buffer.mem);
-    staging_buffer.mapped = nullptr;
-
     auto& submission = submissions[submission_index];
+
+    if(submission.draw_completed_fence_submitted) {
+        VK_CHECK(vkWaitForFences(device, 1, &submission.draw_completed_fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
+        VK_CHECK(vkResetFences(device, 1, &submission.draw_completed_fence));
+        submission.draw_completed_fence_submitted = false;
+    }
 
     VkResult result;
     uint32_t swapchain_index;
@@ -1650,15 +1649,9 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
 
     auto cb = submission.command_buffer;
 
-    if(submission.draw_completed_fence_submitted) {
-        VK_CHECK(vkWaitForFences(device, 1, &submission.draw_completed_fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
-        VK_CHECK(vkResetFences(device, 1, &submission.draw_completed_fence));
-        submission.draw_completed_fence_submitted = false;
-    }
-
     VkCommandBufferBeginInfo begin {
         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
-        .flags = 0, // VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        .flags = 0,
         .pInheritanceInfo = nullptr,
     };
     VK_CHECK(vkResetCommandBuffer(cb, 0));
@@ -1744,8 +1737,6 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
     submission.draw_completed_fence_submitted = false;
 
     per_image.layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
-
-    staging_buffer.Release();
 
     submission_index = (submission_index + 1) % submissions.size();
     swapchainimage_semaphore_index = (swapchainimage_semaphore_index + 1) % swapchainimage_semaphores.size();
