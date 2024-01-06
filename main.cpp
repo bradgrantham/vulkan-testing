@@ -194,13 +194,16 @@ struct Vertex
 
 struct Buffer
 {
+    VkDevice device;
     VkDeviceMemory mem { VK_NULL_HANDLE };
     VkBuffer buf { VK_NULL_HANDLE };
     void* mapped { nullptr };
 
-    void Create(VkPhysicalDevice physical_device, VkDevice device, size_t size, VkBufferUsageFlags usage_flags, VkMemoryPropertyFlags properties)
+    void Create(VkPhysicalDevice physical_device, VkDevice device_, size_t size, VkBufferUsageFlags usage_flags, VkMemoryPropertyFlags properties)
     {
-        assert(mem == VK_NULL_HANDLE);
+        Release();
+
+        device = device_;
 
         VkBufferCreateInfo create_buffer {
             .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
@@ -228,6 +231,16 @@ struct Buffer
 
     void Release()
     {
+        if(mapped) {
+            vkUnmapMemory(device, mem);
+            mapped = nullptr;
+        }
+        if(mem != VK_NULL_HANDLE) {
+            vkFreeMemory(device, mem, nullptr);
+            mem = VK_NULL_HANDLE;
+            vkDestroyBuffer(device, buf, nullptr);
+            buf = VK_NULL_HANDLE;
+        }
     }
 };
 
@@ -732,11 +745,8 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
 }
 
 template <class TEXTURE>
-void CreateDeviceTextureImage(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue, TEXTURE texture, VkImage* textureImage, VkDeviceMemory* textureMemory)
+void CreateDeviceTextureImage(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue, TEXTURE texture, VkImage* textureImage, VkDeviceMemory* textureMemory, VkImageUsageFlags usage_flags, VkImageLayout final_layout)
 {
-    VkFormatProperties format_properties;
-    vkGetPhysicalDeviceFormatProperties(physical_device, texture->GetVulkanFormat(), &format_properties);
-
     Buffer staging_buffer;
     staging_buffer.Create(physical_device, device, texture->GetSize(), VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
     VK_CHECK(vkMapMemory(device, staging_buffer.mem, 0, texture->GetSize(), 0, &staging_buffer.mapped));
@@ -756,7 +766,7 @@ void CreateDeviceTextureImage(VkPhysicalDevice physical_device, VkDevice device,
         .arrayLayers = 1,
         .samples = VK_SAMPLE_COUNT_1_BIT,
         .tiling = VK_IMAGE_TILING_OPTIMAL,
-        .usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
+        .usage = usage_flags,
         .initialLayout = VK_IMAGE_LAYOUT_PREINITIALIZED,
     };
     VK_CHECK(vkCreateImage(device, &createImageInfo, nullptr, textureImage));
@@ -818,7 +828,7 @@ void CreateDeviceTextureImage(VkPhysicalDevice physical_device, VkDevice device,
         .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-        .newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+        .newLayout = final_layout,
         .image = *textureImage,
         .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
     };
@@ -896,7 +906,7 @@ struct Drawable
     void CreateDeviceData(VkPhysicalDevice physical_device, VkDevice device, VkQueue queue)
     {
         if(texture) {
-            CreateDeviceTextureImage(physical_device, device, queue, texture, &textureImage, &textureMemory);
+            CreateDeviceTextureImage(physical_device, device, queue, texture, &textureImage, &textureMemory, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
             textureSampler = CreateSampler(device, VK_SAMPLER_MIPMAP_MODE_NEAREST, VK_SAMPLER_ADDRESS_MODE_REPEAT);
             textureImageView = CreateImageView(device, texture->GetVulkanFormat(), textureImage, VK_IMAGE_ASPECT_COLOR_BIT);
         }
@@ -942,7 +952,6 @@ std::vector<VkImage> GetSwapchainImages(VkDevice device, VkSwapchainKHR swapchai
 namespace VulkanApp
 {
 
-float frame = 0.0;
 bool beVerbose = true;
 bool enableValidation = false;
 
@@ -971,14 +980,16 @@ static constexpr int SUBMISSIONS_IN_FLIGHT = 2;
 std::vector<Submission> submissions(SUBMISSIONS_IN_FLIGHT);
 
 // frame stuff - swapchains indices, fences, semaphores
-uint32_t swapchain_index;
+uint32_t swapchain_index = 0;
 uint32_t swapchain_image_count = 3;
 struct PerSwapchainImage {
+    VkImageLayout layout;
     VkImage image;
-    VkSemaphore image_acquired_semaphore;
     VkFramebuffer framebuffer;
 };
 std::vector<PerSwapchainImage> per_swapchainimage;
+uint32_t swapchainimage_semaphore_index = 0;
+std::vector<VkSemaphore> swapchainimage_semaphores;
 
 // rendering stuff - pipelines, binding & drawing commands
 VkPipelineLayout pipeline_layout;
@@ -989,6 +1000,7 @@ VkDescriptorSetLayout descriptor_set_layout;
 
 // interaction data
 
+float frame = 0.0;
 manipulator ObjectManip;
 manipulator LightManip;
 manipulator* CurrentManip;
@@ -999,12 +1011,6 @@ double oldMouseY;
 float fov = 45;
 
 // geometry data
-
-float zoom = 1.0;
-vec4 object_rotation{0, 0, 0, 1};
-vec3 object_translation;
-vec3 object_scale;
-
 typedef std::unique_ptr<Drawable> DrawablePtr;
 DrawablePtr drawable;
 
@@ -1185,10 +1191,12 @@ void InitializeState(int windowWidth, int windowHeight)
     swapchain_image_count = static_cast<uint32_t>(swapchain_images.size());
 
     per_swapchainimage.resize(swapchain_image_count);
+    swapchainimage_semaphores.resize(swapchain_image_count);
     for(uint32_t i = 0; i < swapchain_image_count; i++) {
         auto& per_image = per_swapchainimage[i];
 
         per_image.image = swapchain_images[i];
+        per_image.layout = VK_IMAGE_LAYOUT_UNDEFINED;
 
         // XXX create a timeline semaphore by chaining after a
         // VkSemaphoreTypeCreateInfo with VkSemaphoreTypeCreateInfo =
@@ -1197,7 +1205,7 @@ void InitializeState(int windowWidth, int windowHeight)
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
             .flags = 0,
         };
-        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &per_image.image_acquired_semaphore));
+        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &swapchainimage_semaphores[i]));
     }
 
     std::vector<VkImageView> colorImageViews(swapchain_image_count);
@@ -1532,7 +1540,6 @@ void DrawFrame(GLFWwindow *window)
     glfwGetWindowSize(window, &windowWidth, &windowHeight);
 
     auto& submission = submissions[submission_index];
-    auto& per_image = per_swapchainimage[swapchain_index];
 
     VK_CHECK(vkWaitForFences(device, 1, &submission.draw_completed_fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
     VK_CHECK(vkResetFences(device, 1, &submission.draw_completed_fence));
@@ -1560,10 +1567,7 @@ void DrawFrame(GLFWwindow *window)
     vec4 light_position{1000, 1000, 1000, 0};
     vec3 light_color{1, 1, 1};
 
-    // mat4f light_transform_3x3 = LightManip.m_matrix;
-    // light_transform_3x3.m_v[12] = 0.0f; light_transform_3x3.m_v[13] = 0.0f; light_transform_3x3.m_v[14] = 0.0f;
-
-    light_position = light_position * LightManip.m_matrix; // light_transform_3x3;
+    light_position = light_position * LightManip.m_matrix;
 
     FragmentUniforms* fragment_uniforms = static_cast<FragmentUniforms*>(submission.uniform_buffers[1].mapped);
     fragment_uniforms->light_position[0] = light_position[0];
@@ -1575,7 +1579,8 @@ void DrawFrame(GLFWwindow *window)
     shading_uniforms->specular_color.set(drawable->specular_color); // XXX drops specular_color[3]
     shading_uniforms->shininess = drawable->shininess;
 
-    VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, per_image.image_acquired_semaphore, VK_NULL_HANDLE, &swapchain_index));
+    VK_CHECK(vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, swapchainimage_semaphores[swapchainimage_semaphore_index], VK_NULL_HANDLE, &swapchain_index));
+    auto& per_image = per_swapchainimage[swapchain_index];
 
     auto cb = submission.command_buffer;
 
@@ -1605,8 +1610,6 @@ void DrawFrame(GLFWwindow *window)
 
     vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &submission.descriptor_set, 0, NULL);
 
-    // 8. Bind the texture resources - NA
-
     // 7. Bind the vertex and index buffers
     drawable->BindForDraw(device, cb);
 
@@ -1627,7 +1630,7 @@ void DrawFrame(GLFWwindow *window)
     VkSubmitInfo submit {
         .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
         .waitSemaphoreCount = 1,
-        .pWaitSemaphores = &per_image.image_acquired_semaphore,
+        .pWaitSemaphores = &swapchainimage_semaphores[swapchainimage_semaphore_index],
         .pWaitDstStageMask = &waitdststagemask,
         .commandBufferCount = 1,
         .pCommandBuffers = &cb,
@@ -1648,8 +1651,10 @@ void DrawFrame(GLFWwindow *window)
     };
     VK_CHECK(vkQueuePresentKHR(queue, &present));
 
-    swapchain_index = (swapchain_index + 1) % swapchain_image_count;
     submission_index = (submission_index + 1) % submissions.size();
+    swapchainimage_semaphore_index = (swapchainimage_semaphore_index + 1) % swapchainimage_semaphores.size();
+
+    frame += 1;
 }
 
 };
@@ -2028,10 +2033,6 @@ void LoadModel(const char *filename)
     }
 
     drawable = std::make_unique<Drawable>(vertices, indices, specular_color, shininess, texture);
-
-    object_translation = drawable->bounds.center() * -1;
-    float dim = length(drawable->bounds.dim());
-    object_scale = vec3(.5f / dim, .5f / dim, .5f / dim);
 
     ObjectManip = manipulator(drawable->bounds, fov / 180.0f * 3.14159f / 2);
     LightManip = manipulator(aabox(), fov / 180.0f * 3.14159f / 2);
