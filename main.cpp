@@ -928,14 +928,6 @@ std::vector<VkImage> GetSwapchainImages(VkDevice device, VkSwapchainKHR swapchai
 namespace VulkanApp
 {
 
-enum { DRAW_VULKAN_DRAW_INDEXED, DRAW_CPU, DRAW_MODE_COUNT };
-int drawing_mode = DRAW_VULKAN_DRAW_INDEXED;
-std::map<int, std::string> DrawingModeNames = {
-    {DRAW_VULKAN_DRAW_INDEXED, "Vulkan using DrawIndexed"},
-    {DRAW_CPU, "CPU render"},
-};
-
-float frame = 0.0;
 bool beVerbose = true;
 bool enableValidation = false;
 
@@ -991,6 +983,16 @@ VkDescriptorSetLayout descriptor_set_layout;
 
 // interaction data
 
+enum { DRAW_VULKAN_DRAW_INDEXED, DRAW_CPU, DRAW_MODE_COUNT };
+int drawing_mode = DRAW_CPU;
+std::map<int, std::string> DrawingModeNames = {
+    {DRAW_VULKAN_DRAW_INDEXED, "Vulkan using DrawIndexed"},
+    {DRAW_CPU, "CPU render"},
+};
+
+float frame = 0.0;
+
+manipulator VolumeManip;
 manipulator ObjectManip;
 manipulator LightManip;
 manipulator* CurrentManip;
@@ -1031,6 +1033,7 @@ void CreatePerSubmissionData()
             .flags = 0,
         };
         VK_CHECK(vkCreateFence(device, &fence_create, nullptr, &submission.draw_completed_fence));
+        submission.draw_completed_fence_submitted = false;
 
         VkSemaphoreCreateInfo sema_create {
             .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
@@ -1588,25 +1591,47 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
         image_data.resize(required_size);
     }
 
-    for(int y = 0; y < width; y++) {
-        for(int x = 0; x < height; x++) {
-            float u = x / (float)width;
-            float v = y / (float)height;
-            image_data[(x + y * height) * 4 + 0] = u * 255;
-            image_data[(x + y * height) * 4 + 1] = v * 255;
-            image_data[(x + y * height) * 4 + 2] = 0;
-            image_data[(x + y * height) * 4 + 3] = 0;
+    for(int y = 0; y < height; y++) {
+        for(int x = 0; x < width; x++) {
+            // XXX make this centered
+            float u = (x / (float)width) * 2.0f - 1.0f;
+            float v = ((height - y - 1) / (float)height) * 2.0f - 1.0f;
+            vec3 o{0, 0, 0};
+            vec3 d{u, v, 1};
+            ray eye_ray{o, d};
+            mat4f to_object = inverse(VolumeManip.m_matrix);
+            ray object_ray = eye_ray * to_object;
+
+            vec3 boxmin {-1, -1, -1};
+            vec3 boxmax {1, 1, 1};
+            aabox bounds {boxmin, boxmax};
+
+            int index = (x + y * height) * 4;
+            range rn = ray_intersect_box(bounds, object_ray);
+            if(rn) {
+                image_data[index + 0] = 255;
+                image_data[index + 1] = 255;
+                image_data[index + 2] = 255;
+                image_data[index + 3] = 0;
+            } else {
+                image_data[index + 0] = 0;
+                image_data[index + 1] = 0;
+                image_data[index + 2] = 0;
+                image_data[index + 3] = 0;
+            }
         }
     }
 
+    // XXX this is probably very inefficient - every frame makes a buffer,
+    // copies into the buffer, then makes and image, copies into the
+    // image, then copies that image to the swapchain image.  Should
+    // make the staging buffer on demand and should skip the middle
+    // image
     VkImage image;
     VkDeviceMemory memory;
     ImageDataWrapper imagewrapper(image_data, width, height);
     CreateDeviceTextureImage(physical_device, device, queue, &imagewrapper, &image, &memory, VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 
-    // Copy image to present image
-    // transition present image to PRESENT_SRC
-    // Present
     auto& submission = submissions[submission_index];
 
     VkResult result;
@@ -1644,7 +1669,7 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
         .dstAccessMask = 0,
         .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+        .oldLayout = per_image.layout,
         .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         .image = per_image.image,
         .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
@@ -1721,7 +1746,10 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
     }
 
     VK_CHECK(vkWaitForFences(device, 1, &submission.draw_completed_fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
+    VK_CHECK(vkResetFences(device, 1, &submission.draw_completed_fence));
     submission.draw_completed_fence_submitted = false;
+
+    per_image.layout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
 
     vkFreeMemory(device, memory, nullptr); // Could put these in per_image and then wouldn't wait every frame
     vkDestroyImage(device, image, nullptr);
@@ -1744,8 +1772,6 @@ void DrawFrameVulkanDrawIndexed([[maybe_unused]] GLFWwindow *window)
         VK_CHECK(vkResetFences(device, 1, &submission.draw_completed_fence));
         submission.draw_completed_fence_submitted = false;
     }
-
-    frame += 1;
 
     mat4f modelview = ObjectManip.m_matrix;
     mat4f modelview_3x3 = modelview;
@@ -1910,6 +1936,12 @@ static void KeyCallback(GLFWwindow *window, int key, [[maybe_unused]] int scanco
             case 'M':
                 drawing_mode = (drawing_mode + 1) % DRAW_MODE_COUNT;
                 printf("Current drawing mode: %s\n", DrawingModeNames[drawing_mode].c_str());
+                if(drawing_mode == DRAW_VULKAN_DRAW_INDEXED) {
+                    CurrentManip = &ObjectManip;
+                } else {
+                    CurrentManip = &VolumeManip;
+                    VolumeManip.m_mode = manipulator::ROTATE;
+                }
                 break;
 
             case 'W':
@@ -2278,7 +2310,16 @@ void LoadModel(const char *filename)
 
     ObjectManip = manipulator(drawable->bounds, fov / 180.0f * 3.14159f / 2);
     LightManip = manipulator(aabox(), fov / 180.0f * 3.14159f / 2);
-    CurrentManip = &ObjectManip;
+    if(drawing_mode == DRAW_VULKAN_DRAW_INDEXED) {
+        CurrentManip = &ObjectManip;
+    } else {
+        CurrentManip = &VolumeManip;
+    }
+
+    vec3 boxmin {-1, -1, -1};
+    vec3 boxmax {1, 1, 1};
+    aabox bounds {boxmin, boxmax};
+    VolumeManip = manipulator(bounds, fov / 180.0f * 3.14159f / 2);
 
     fclose(fp);
 }
