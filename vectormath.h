@@ -1021,6 +1021,7 @@ inline ray operator*(const ray& r, const mat4f& m)
     return ray(newo, newd);
 }
 
+// Distance along r to plane
 inline float operator*(const ray& r, const vec4& plane)
 {
     vec3 normal(plane[0], plane[1], plane[2]);
@@ -1045,6 +1046,7 @@ inline void transform_ray(const vec4& origin, const vec4& direction, const mat4f
     *newdirection = (oldorigin + direction) * m - *neworigin;
 }
 
+// XXX Should be able to use normal matrix to transform ray direction...
 inline void transform_ray(vec3* origin, vec3* direction, const mat4f& m)
 {
     vec3 neworigin, newdirection;
