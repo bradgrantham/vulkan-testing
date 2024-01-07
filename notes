@@ -1,8 +1,1 @@
-All my C++ Create functions should return the thing they created (or throw?)
-Should I be doing descriptor writes at draw time?
-handle window resize - wait, destroy, recreate per-swapchain data
-try a second object
 cleanup - why shouldn't there be SUBMISSIONS_IN_FLIGHT count depth images?
-add ImGUI?
-raytracing
-load simple gltf2s
