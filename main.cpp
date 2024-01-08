@@ -992,6 +992,7 @@ std::map<int, std::string> DrawingModeNames = {
 
 float frame = 0.0;
 
+aabox volume_bounds;
 manipulator VolumeManip;
 manipulator ObjectManip;
 manipulator LightManip;
@@ -1601,21 +1602,22 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
             float u = ((x + .5f) / (float)width) * 2.0f - 1.0f;
             float v = ((height - (y + .5f) - 1) / (float)height) * 2.0f - 1.0f;
             vec3 o{0, 0, 0};
-            vec3 d{u, v, 1};
+            vec3 d{u, v, -1};
             ray eye_ray{o, d};
             mat4f to_object = inverse(VolumeManip.m_matrix);
             ray object_ray = eye_ray * to_object;
 
-            vec3 boxmin {-1, -1, -1};
-            vec3 boxmax {1, 1, 1};
-            aabox bounds {boxmin, boxmax};
-
             int index = (x + y * height) * 4;
-            range rn = ray_intersect_box(bounds, object_ray);
+            range rn = ray_intersect_box(volume_bounds, object_ray);
             if(rn) {
-                image_data[index + 0] = 255;
-                image_data[index + 1] = 255;
-                image_data[index + 2] = 255;
+                vec3 where = object_ray.at(rn.t0);
+                where -= volume_bounds.boxmin;
+                where[0] /= volume_bounds.dim()[0];
+                where[1] /= volume_bounds.dim()[1];
+                where[2] /= volume_bounds.dim()[2];
+                image_data[index + 0] = 255 * std::clamp(where[0], 0.0f, 1.0f);
+                image_data[index + 1] = 255 * std::clamp(where[1], 0.0f, 1.0f);
+                image_data[index + 2] = 255 * std::clamp(where[2], 0.0f, 1.0f);
                 image_data[index + 3] = 0;
             } else {
                 image_data[index + 0] = 0;
@@ -2300,10 +2302,10 @@ void LoadModel(const char *filename)
         CurrentManip = &VolumeManip;
     }
 
-    vec3 boxmin {-1, -1, -1};
-    vec3 boxmax {1, 1, 1};
-    aabox bounds {boxmin, boxmax};
-    VolumeManip = manipulator(bounds, fov / 180.0f * 3.14159f / 2);
+    vec3 boxmin {0, 0, 0};
+    vec3 boxmax {1,1,1}; // {512, 512, 114};
+    volume_bounds = aabox(boxmin, boxmax);
+    VolumeManip = manipulator(volume_bounds, fov / 180.0f * 3.14159f / 2);
 
     fclose(fp);
 }
