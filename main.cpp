@@ -1578,6 +1578,26 @@ struct ImageDataWrapper
     size_t GetSize() { return width * height * 4; }
 };
 
+std::vector<uint16_t> ct_data(512 * 512 * 2 * 114);
+void LoadCTData()
+{
+    for(int i = 0; i < 114; i++) {
+        static char filename[512];
+        snprintf(filename, sizeof(filename), "%s/file_%03d.bin", getenv("IMAGES"), i);
+        FILE *fp = fopen(filename, "rb");
+        if(!fp) {
+            printf("couldn't open \"%s\" for reading\n", filename);
+            exit(EXIT_FAILURE);
+        }
+        size_t was_read = fread(ct_data.data() + 512 * 512 * 2 * i, 2, 512 * 512, fp);
+        if(was_read != 512 * 512) {
+            printf("short read from \"%s\"\n", filename);
+            exit(EXIT_FAILURE);
+        }
+        fclose(fp);
+    }
+}
+
 void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
 {
     VkSurfaceCapabilitiesKHR surfcaps;
@@ -2318,6 +2338,8 @@ void usage(const char *progName)
 int main(int argc, char **argv)
 {
     using namespace VulkanApp;
+    
+    LoadCTData();
 
     beVerbose = (getenv("BE_NOISY") != nullptr);
     enableValidation = (getenv("VALIDATE") != nullptr);
