@@ -1578,23 +1578,148 @@ struct ImageDataWrapper
     size_t GetSize() { return width * height * 4; }
 };
 
-std::vector<uint16_t> ct_data(512 * 512 * 2 * 114);
+std::vector<uint16_t> ct_data;
+std::vector<vec3> ct_data_normal;
+
+std::tuple<int, int, int> NormalizedToIndices(const vec3& uvw)
+{
+    int i = std::clamp(static_cast<int>(uvw[0] * 512), 0, 511);
+    int j = std::clamp(static_cast<int>(uvw[1] * 512), 0, 511);
+    int k = std::clamp(static_cast<int>(uvw[2] * 114), 0, 113);
+    return {i, j, k};
+}
+
+uint16_t LookupCTDensity(int i, int j, int k)
+{
+    return ct_data[i + j * 512 + k * 512 * 512];
+}
+
+uint16_t LookupCTDensity(const vec3& uvw)
+{
+    auto [i, j, k] = NormalizedToIndices(uvw);
+    return LookupCTDensity(i, j, k);
+}
+
+void SetCTNormal(const vec3& uvw, const vec3& normal)
+{
+    auto [i, j, k] = NormalizedToIndices(uvw);
+    ct_data_normal[i + j * 512 + k * 512 * 512] = normal;
+}
+
+vec3 LookupCTNormal(int i, int j, int k)
+{
+    return ct_data_normal[i + j * 512 + k * 512 * 512];
+}
+
+vec3 LookupCTNormal(const vec3& uvw)
+{
+    auto [i, j, k] = NormalizedToIndices(uvw);
+    return LookupCTNormal(i, j, k);
+}
+
+void CalculateGradients()
+{
+    float du = 1.1f / 512;
+    float dv = 1.1f / 512;
+    float dw = 1.1f / 114;
+
+    for(int k = 0; k < 114; k++) {
+        for(int j = 0; j < 512; j++) {
+            for(int i = 0; i < 512; i++) {
+                vec3 uvw { i / 512.0f, j / 512.0f, k / 114.0f };
+                float v = LookupCTDensity(uvw);
+                float gu = (LookupCTDensity(uvw + vec3(du, 0, 0)) - v) / du;
+                float gv = (LookupCTDensity(uvw + vec3(0, dv, 0)) - v) / dv;
+                float gw = (LookupCTDensity(uvw + vec3(0, 0, dw)) - v) / dw;
+                vec3 normal {gu, gv, gw};
+                if(length(normal) > .001) {
+                    SetCTNormal(uvw, normalize(normal));
+                } else {
+                    SetCTNormal(uvw, vec3(0, 0, 0));
+                }
+            }
+        }
+    }
+}
+
 void LoadCTData()
 {
-    for(int i = 0; i < 114; i++) {
-        static char filename[512];
-        snprintf(filename, sizeof(filename), "%s/file_%03d.bin", getenv("IMAGES"), i);
-        FILE *fp = fopen(filename, "rb");
-        if(!fp) {
-            printf("couldn't open \"%s\" for reading\n", filename);
-            exit(EXIT_FAILURE);
+    ct_data.resize(512 * 512 * 114);
+    ct_data_normal.resize(512 * 512 * 114);
+    if(true) {
+        for(int i = 0; i < 114; i++) {
+            static char filename[512];
+            snprintf(filename, sizeof(filename), "%s/file_%03d.bin", getenv("IMAGES"), i);
+            FILE *fp = fopen(filename, "rb");
+            if(!fp) {
+                printf("couldn't open \"%s\" for reading\n", filename);
+                exit(EXIT_FAILURE);
+            }
+            size_t was_read = fread(ct_data.data() + 512 * 512 * i, 2, 512 * 512, fp);
+            if(was_read != 512 * 512) {
+                printf("short read from \"%s\"\n", filename);
+                exit(EXIT_FAILURE);
+            }
+            fclose(fp);
+
+#if 0
+            snprintf(filename, sizeof(filename), "file_%03d.ppm", i);
+            fp = fopen(filename, "wb");
+            if(!fp) {
+                printf("couldn't open \"%s\" for writing\n", filename);
+                exit(EXIT_FAILURE);
+            }
+            fprintf(fp, "P5 512 512 255\n");
+            for(int j = 0; j < 512 * 512; j++) {
+                uint8_t b = ct_data[j + i * 512 * 512] % 256;
+                fwrite(&b, 1, 1, fp);
+            }
+            fclose(fp);
+#endif
         }
-        size_t was_read = fread(ct_data.data() + 512 * 512 * 2 * i, 2, 512 * 512, fp);
-        if(was_read != 512 * 512) {
-            printf("short read from \"%s\"\n", filename);
-            exit(EXIT_FAILURE);
+    } else {
+        for(int k = 0; k < 114; k++) {
+            for(int j = 0; j < 512; j++) {
+                for(int i = 0; i < 512; i++) {
+                    vec3 uvw { i / 512.0f, j / 512.0f, k / 114.0f };
+                    float r = length(uvw - vec3(.5f, .5f, .5f));
+                    int index = i + j * 512 + k * 512 * 512;
+                    ct_data[index] = (r > .5) ? 0 : 65535;
+                }
+            }
         }
-        fclose(fp);
+    }
+    CalculateGradients();
+}
+
+uint16_t threshold = 8500;
+
+void trace_volume(const ray& ray, float color[3])
+{
+    range rn = ray_intersect_box(volume_bounds, ray);
+    if(rn) {
+        // vec3 enter_volume = ray.at(rn.t0);
+        // vec3 exit_volume = ray.at(rn.t1);
+        for(float t = rn.t0; t < rn.t1; t += 1/512.0) {
+            // enter_volume -= volume_bounds.boxmin;
+            // exit_volume -= volume_bounds.boxmin;
+            uint16_t density = LookupCTDensity(ray.at(t));
+            if(density > threshold) {
+                vec3 normal = LookupCTNormal(ray.at(t));
+                float lighting = fabsf(dot(normal, vec3(.577f, .577f, .577f)));
+                color[0] = lighting;
+                color[1] = lighting;
+                color[2] = lighting;
+                return;
+            }
+        }
+        color[0] = 0.0f;
+        color[1] = 0.0f;
+        color[2] = 0.0f;
+    } else {
+        color[0] = 0.0f;
+        color[1] = 0.0f;
+        color[2] = 0.0f;
     }
 }
 
@@ -1618,33 +1743,23 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
     uint8_t* image_data = static_cast<uint8_t*>(staging_buffer.mapped);
     for(int y = 0; y < height; y++) {
         for(int x = 0; x < width; x++) {
-            // XXX make this centered
             float u = ((x + .5f) / (float)width) * 2.0f - 1.0f;
             float v = ((height - (y + .5f) - 1) / (float)height) * 2.0f - 1.0f;
-            vec3 o{0, 0, 0};
-            vec3 d{u, v, -1};
-            ray eye_ray{o, d};
+
+            vec3 o {0, 0, 0};
+            vec3 d {u, v, -1};
+            ray eye_ray {{0, 0, 0}, {u, v, -1}};
+
             mat4f to_object = inverse(VolumeManip.m_matrix);
             ray object_ray = eye_ray * to_object;
 
+            float color[3];
+            trace_volume(object_ray, color);
+
             int index = (x + y * height) * 4;
-            range rn = ray_intersect_box(volume_bounds, object_ray);
-            if(rn) {
-                vec3 where = object_ray.at(rn.t0);
-                where -= volume_bounds.boxmin;
-                where[0] /= volume_bounds.dim()[0];
-                where[1] /= volume_bounds.dim()[1];
-                where[2] /= volume_bounds.dim()[2];
-                image_data[index + 0] = 255 * std::clamp(where[0], 0.0f, 1.0f);
-                image_data[index + 1] = 255 * std::clamp(where[1], 0.0f, 1.0f);
-                image_data[index + 2] = 255 * std::clamp(where[2], 0.0f, 1.0f);
-                image_data[index + 3] = 0;
-            } else {
-                image_data[index + 0] = 0;
-                image_data[index + 1] = 0;
-                image_data[index + 2] = 0;
-                image_data[index + 3] = 0;
-            }
+            image_data[index + 0] = 255 * std::clamp(color[0], 0.0f, 1.0f);
+            image_data[index + 1] = 255 * std::clamp(color[1], 0.0f, 1.0f);
+            image_data[index + 2] = 255 * std::clamp(color[2], 0.0f, 1.0f);
         }
     }
 
@@ -1954,23 +2069,23 @@ static void KeyCallback(GLFWwindow *window, int key, [[maybe_unused]] int scanco
                 break;
 
             case 'R':
-                CurrentManip = &ObjectManip;
-                ObjectManip.m_mode = manipulator::ROTATE;
+                CurrentManip = &VolumeManip;
+                VolumeManip.m_mode = manipulator::ROTATE;
                 break;
 
             case 'O':
-                CurrentManip = &ObjectManip;
-                ObjectManip.m_mode = manipulator::ROLL;
+                CurrentManip = &VolumeManip;
+                VolumeManip.m_mode = manipulator::ROLL;
                 break;
 
             case 'X':
-                CurrentManip = &ObjectManip;
-                ObjectManip.m_mode = manipulator::SCROLL;
+                CurrentManip = &VolumeManip;
+                VolumeManip.m_mode = manipulator::SCROLL;
                 break;
 
             case 'Z':
-                CurrentManip = &ObjectManip;
-                ObjectManip.m_mode = manipulator::DOLLY;
+                CurrentManip = &VolumeManip;
+                VolumeManip.m_mode = manipulator::DOLLY;
                 break;
 
             case 'L':
@@ -1980,6 +2095,30 @@ static void KeyCallback(GLFWwindow *window, int key, [[maybe_unused]] int scanco
 
             case 'Q': case GLFW_KEY_ESCAPE: case '\033':
                 glfwSetWindowShouldClose(window, GL_TRUE);
+                break;
+
+            case GLFW_KEY_LEFT_BRACKET:
+                threshold -= 1000;
+                break;
+
+            case GLFW_KEY_RIGHT_BRACKET:
+                threshold += 1000;
+                break;
+
+            case GLFW_KEY_SEMICOLON:
+                threshold -= 100;
+                break;
+
+            case GLFW_KEY_APOSTROPHE:
+                threshold += 100;
+                break;
+
+            case GLFW_KEY_COMMA:
+                threshold -= 10;
+                break;
+
+            case GLFW_KEY_PERIOD:
+                threshold += 10;
                 break;
         }
     }
