@@ -10,6 +10,8 @@
 #include <string>
 #include <array>
 #include <filesystem>
+#include <thread>
+// #include <execution>
 
 #include <cstring>
 #include <cassert>
@@ -1655,10 +1657,16 @@ void LoadCTData()
                 printf("couldn't open \"%s\" for reading\n", filename);
                 exit(EXIT_FAILURE);
             }
-            size_t was_read = fread(ct_data.data() + 512 * 512 * i, 2, 512 * 512, fp);
-            if(was_read != 512 * 512) {
-                printf("short read from \"%s\"\n", filename);
-                exit(EXIT_FAILURE);
+            for(int row = 0; row < 512; row++) {
+                static uint16_t rowbuffer[512];
+                size_t was_read = fread(rowbuffer, 2, 512, fp);
+                if(was_read != 512) {
+                    printf("short read from \"%s\"\n", filename);
+                    exit(EXIT_FAILURE);
+                }
+                for(int column = 0; column < 512; column++) {
+                    ct_data[512 * 512 * i + 512 * row + column] = rowbuffer[512 - 1 - column];
+                }
             }
             fclose(fp);
 
@@ -1694,7 +1702,7 @@ void LoadCTData()
 
 uint16_t threshold = 8500;
 
-void trace_volume(const ray& ray, float color[3])
+bool trace_volume(const ray& ray, vec3& color, vec3& normal)
 {
     range rn = ray_intersect_box(volume_bounds, ray);
     if(rn) {
@@ -1705,21 +1713,80 @@ void trace_volume(const ray& ray, float color[3])
             // exit_volume -= volume_bounds.boxmin;
             uint16_t density = LookupCTDensity(ray.at(t));
             if(density > threshold) {
-                vec3 normal = LookupCTNormal(ray.at(t));
-                float lighting = fabsf(dot(normal, vec3(.577f, .577f, .577f)));
-                color[0] = lighting;
-                color[1] = lighting;
-                color[2] = lighting;
-                return;
+                normal = LookupCTNormal(ray.at(t));
+                color = vec3(1, 1, 1);
+                return true;
             }
         }
-        color[0] = 0.0f;
-        color[1] = 0.0f;
-        color[2] = 0.0f;
-    } else {
-        color[0] = 0.0f;
-        color[1] = 0.0f;
-        color[2] = 0.0f;
+    }
+    return false;
+}
+
+void Render(uint8_t *image_data, int surfWidth, int surfHeight)
+{
+    // mat4f modelview = ObjectManip.m_matrix;
+    // mat4f modelview_3x3 = modelview;
+    // modelview_3x3.m_v[12] = 0.0f; modelview_3x3.m_v[13] = 0.0f; modelview_3x3.m_v[14] = 0.0f;
+    // mat4f modelview_normal = inverse(transpose(modelview_3x3));
+
+    static constexpr int tileWidth = 32;
+    static constexpr int tileHeight = 32;
+
+    std::vector<std::tuple<int, int, int, int>> tiles;
+
+    for(int tileY = 0; tileY < surfHeight; tileY += tileHeight) {
+        for(int tileX = 0; tileX < surfWidth; tileX += tileWidth) {
+            tiles.push_back({tileX, tileY, std::min(tileX + tileWidth, surfWidth), std::min(tileY + tileHeight, surfHeight)});
+        }
+    }
+
+    auto renderTile = [=](const std::tuple<int, int, int, int>& bounds) {
+        auto [tileX, tileY, width, height] = bounds;
+        for(int y = tileY; y < height; y ++) {
+            for(int x = tileX; x < width; x ++) {
+                float u = ((x + .5f) / (float)surfWidth) * 2.0f - 1.0f;
+                float v = ((surfHeight - (y + .5f) - 1) / (float)surfHeight) * 2.0f - 1.0f;
+
+                vec3 o {0, 0, 0};
+                vec3 d {u, v, -1};
+                ray eye_ray {{0, 0, 0}, {u, v, -1}};
+
+                mat4f to_object = inverse(VolumeManip.m_matrix);
+                ray object_ray = eye_ray * to_object;
+
+                vec3 surface_color;
+                vec3 normal;
+                bool hit = trace_volume(object_ray, surface_color, normal);
+
+                vec3 color;
+                if(hit && (normal[0] != 0.0f) && (normal[1] != 0.0f) && (normal[2] != 0.0f)) {
+                    float lighting = fabsf(dot(normal, vec3(.577f, .577f, .577f)));
+                    color = vec3(lighting, lighting, lighting);
+                } else {
+                    color = vec3(0, 0, 0);
+                }
+
+                int index = (x + y * surfWidth) * 4;
+                image_data[index + 0] = 255 * std::clamp(color[0], 0.0f, 1.0f);
+                image_data[index + 1] = 255 * std::clamp(color[1], 0.0f, 1.0f);
+                image_data[index + 2] = 255 * std::clamp(color[2], 0.0f, 1.0f);
+            }
+        }
+    };
+
+    // std::for_each(std::parallel_unsequenced_policy, tiles.begin(), tiles.end(), renderTile);
+    std::vector<std::thread*> threads;
+    for(auto const& t: tiles) {
+        auto f = [=]() {
+            renderTile(t);
+        };
+        threads.push_back(new std::thread(f));
+    }
+    while(!threads.empty()) {
+        std::thread* thread = threads.back();
+        threads.pop_back();
+        thread->join();
+        delete thread;
     }
 }
 
@@ -1727,13 +1794,12 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
 {
     VkSurfaceCapabilitiesKHR surfcaps;
     VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &surfcaps));
-    int32_t width = surfcaps.currentExtent.width;
-    int32_t height = surfcaps.currentExtent.height;
+    int32_t surfWidth = surfcaps.currentExtent.width;
+    int32_t surfHeight = surfcaps.currentExtent.height;
 
     static Buffer staging_buffer;
     static size_t previous_size = 0;
-
-    size_t image_size = width * height * 4;
+    size_t image_size = surfWidth * surfHeight * 4;
     if(image_size > previous_size) {
         staging_buffer.Create(physical_device, device, image_size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
         VK_CHECK(vkMapMemory(device, staging_buffer.mem, 0, image_size, 0, &staging_buffer.mapped));
@@ -1741,28 +1807,7 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
     }
 
     uint8_t* image_data = static_cast<uint8_t*>(staging_buffer.mapped);
-    for(int y = 0; y < height; y++) {
-        for(int x = 0; x < width; x++) {
-            float u = ((x + .5f) / (float)width) * 2.0f - 1.0f;
-            float v = ((height - (y + .5f) - 1) / (float)height) * 2.0f - 1.0f;
-
-            vec3 o {0, 0, 0};
-            vec3 d {u, v, -1};
-            ray eye_ray {{0, 0, 0}, {u, v, -1}};
-
-            mat4f to_object = inverse(VolumeManip.m_matrix);
-            ray object_ray = eye_ray * to_object;
-
-            float color[3];
-            trace_volume(object_ray, color);
-
-            int index = (x + y * height) * 4;
-            image_data[index + 0] = 255 * std::clamp(color[0], 0.0f, 1.0f);
-            image_data[index + 1] = 255 * std::clamp(color[1], 0.0f, 1.0f);
-            image_data[index + 2] = 255 * std::clamp(color[2], 0.0f, 1.0f);
-        }
-    }
-
+    Render(image_data, surfWidth, surfHeight);
     auto& submission = submissions[submission_index];
 
     if(submission.draw_completed_fence_submitted) {
@@ -1776,7 +1821,7 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
     while((result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, swapchainimage_semaphores[swapchainimage_semaphore_index], VK_NULL_HANDLE, &swapchain_index)) != VK_SUCCESS) {
         if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
             DestroySwapchainData(device);
-            CreateSwapchainData(physical_device, device, surface, surfcaps.currentExtent.width, surfcaps.currentExtent.height);
+            CreateSwapchainData(physical_device, device, surface, surfWidth, surfHeight);
         } else {
 	    std::cerr << "VkResult from vkAcquireNextImageKHR was " << result << " at line " << __LINE__ << "\n";
             exit(EXIT_FAILURE);
@@ -1810,11 +1855,11 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
     // Copy buffer to image
     VkBufferImageCopy copy {
         .bufferOffset = 0,
-        .bufferRowLength = static_cast<uint32_t>(width),
-        .bufferImageHeight = static_cast<uint32_t>(height),
+        .bufferRowLength = 0, // static_cast<uint32_t>(surfWidth),
+        .bufferImageHeight = 0, // static_cast<uint32_t>(surfHeight),
         .imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1},
         .imageOffset = {0, 0, 0},
-        .imageExtent = {static_cast<uint32_t>(width), static_cast<uint32_t>(height), 1},
+        .imageExtent = {static_cast<uint32_t>(surfWidth), static_cast<uint32_t>(surfHeight), 1},
     };
 
     vkCmdCopyBufferToImage(cb, staging_buffer.buf, per_image.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &copy);
@@ -1862,7 +1907,7 @@ void DrawFrameCPU([[maybe_unused]] GLFWwindow *window)
     if(result != VK_SUCCESS) {
         if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
             DestroySwapchainData(device);
-            CreateSwapchainData(physical_device, device, surface, surfcaps.currentExtent.width, surfcaps.currentExtent.height);
+            CreateSwapchainData(physical_device, device, surface, surfWidth, surfHeight);
         } else {
 	    std::cerr << "VkResult from vkQueuePresentKHR was " << result << " at line " << __LINE__ << "\n";
             exit(EXIT_FAILURE);
