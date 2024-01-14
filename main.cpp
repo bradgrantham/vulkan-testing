@@ -1724,10 +1724,10 @@ bool trace_volume(const ray& ray, vec3& color, vec3& normal)
 
 void Render(uint8_t *image_data, int surfWidth, int surfHeight)
 {
-    // mat4f modelview = ObjectManip.m_matrix;
-    // mat4f modelview_3x3 = modelview;
-    // modelview_3x3.m_v[12] = 0.0f; modelview_3x3.m_v[13] = 0.0f; modelview_3x3.m_v[14] = 0.0f;
-    // mat4f modelview_normal = inverse(transpose(modelview_3x3));
+    mat4f modelview = VolumeManip.m_matrix;
+    mat4f modelview_3x3 = modelview;
+    modelview_3x3.m_v[12] = 0.0f; modelview_3x3.m_v[13] = 0.0f; modelview_3x3.m_v[14] = 0.0f;
+    mat4f modelview_normal = inverse(transpose(modelview_3x3));
 
     static constexpr int tileWidth = 32;
     static constexpr int tileHeight = 32;
@@ -1755,12 +1755,14 @@ void Render(uint8_t *image_data, int surfWidth, int surfHeight)
                 ray object_ray = eye_ray * to_object;
 
                 vec3 surface_color;
-                vec3 normal;
-                bool hit = trace_volume(object_ray, surface_color, normal);
+                vec3 surface_normal;
+                bool hit = trace_volume(object_ray, surface_color, surface_normal);
+                vec3 normal = surface_normal * modelview_normal;
 
                 vec3 color;
                 if(hit && (normal[0] != 0.0f) && (normal[1] != 0.0f) && (normal[2] != 0.0f)) {
-                    float lighting = fabsf(dot(normal, vec3(.577f, .577f, .577f)));
+                    // float lighting = fabsf(dot(normal, vec3(.577f, .577f, .577f)));
+                    float lighting = fabsf(dot(normal, vec3(0, 0, 1)));
                     color = vec3(lighting, lighting, lighting);
                 } else {
                     color = vec3(0, 0, 0);
