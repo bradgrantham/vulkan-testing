@@ -296,13 +296,16 @@ VkInstance CreateInstance(bool enableValidation)
 
     uint32_t glfw_reqd_extension_count;
     const char** glfw_reqd_extensions = glfwGetRequiredInstanceExtensions(&glfw_reqd_extension_count);
+    for(int i = 0; i < glfw_reqd_extension_count; i++) {
+        printf("glfw requested: %s\n", glfw_reqd_extensions[i]);
+    }
     extension_set.insert(glfw_reqd_extensions, glfw_reqd_extensions + glfw_reqd_extension_count);
 
     extension_set.insert(VK_KHR_SURFACE_EXTENSION_NAME);
 #if defined(PLATFORM_WINDOWS)
     extension_set.insert("VK_KHR_win32_surface");
 #elif defined(PLATFORM_LINUX)
-    extension_set.insert(VK_KHR_XCB_SURFACE_EXTENSION_NAME);
+    extension_set.insert("VK_KHR_xcb_surface"); // VK_KHR_XCB_SURFACE_EXTENSION_NAME);
 #elif defined(PLATFORM_MACOS)
     // extension_set.insert(VK_MVK_MACOS_SURFACE_EXTENSION_NAME);
     extension_set.insert("VK_MVK_macos_surface");
@@ -354,7 +357,7 @@ VkInstance CreateInstance(bool enableValidation)
     return instance;
 }
 
-VkPhysicalDevice ChoosePhysicalDevice(VkInstance instance)
+VkPhysicalDevice ChoosePhysicalDevice(VkInstance instance, int specified_gpu)
 {
     uint32_t gpu_count = 0;
     VK_CHECK(vkEnumeratePhysicalDevices(instance, &gpu_count, nullptr));
@@ -362,7 +365,12 @@ VkPhysicalDevice ChoosePhysicalDevice(VkInstance instance)
     std::vector<VkPhysicalDevice> physical_devices(gpu_count);
     VK_CHECK(vkEnumeratePhysicalDevices(instance, &gpu_count, physical_devices.data()));
 
-    return physical_devices[0];
+    if(specified_gpu >= gpu_count) {
+        fprintf(stderr, "requested device #%d but max device index is #%d.\n", specified_gpu, gpu_count);
+        exit(EXIT_FAILURE);
+    }
+
+    return physical_devices[specified_gpu];
 }
 
 const char* DeviceTypeDescriptions[] = {
@@ -776,10 +784,10 @@ void CreateDeviceTextureImage(VkPhysicalDevice physical_device, VkDevice device,
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
         .srcAccessMask = 0,
         .dstAccessMask = 0,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .oldLayout = VK_IMAGE_LAYOUT_PREINITIALIZED,
         .newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .image = *textureImage,
         .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
     };
@@ -801,10 +809,10 @@ void CreateDeviceTextureImage(VkPhysicalDevice physical_device, VkDevice device,
         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
         .srcAccessMask = 0,
         .dstAccessMask = 0,
-        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
         .newLayout = final_layout,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
         .image = *textureImage,
         .subresourceRange = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1}
     };
@@ -1225,10 +1233,10 @@ void CreateSwapchainData(VkPhysicalDevice physical_device, VkDevice device, VkSu
     }
 }
 
-void InitializeState()
+void InitializeState(int specified_gpu)
 {
     // non-frame stuff
-    physical_device = ChoosePhysicalDevice(instance);
+    physical_device = ChoosePhysicalDevice(instance, specified_gpu);
 
     uint32_t formatCount;
     VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, nullptr));
@@ -2098,6 +2106,8 @@ int main(int argc, char **argv)
 {
     using namespace VulkanApp;
 
+    int specified_gpu = 0;
+
     beVerbose = (getenv("BE_NOISY") != nullptr);
     enableValidation = (getenv("VALIDATE") != nullptr);
 
@@ -2105,6 +2115,20 @@ int main(int argc, char **argv)
     argv++;
     argc--;
     while(argc > 0 && argv[0][0] == '-') {
+        if(strcmp(argv[0], "--gpu") == 0) {
+            if(argc < 2) {
+                usage(progName);
+                printf("--gpu requires a GPU index (e.g. \"--gpu 1\")\n");
+                exit(EXIT_FAILURE);
+            }
+            specified_gpu = atoi(argv[1]);
+            argv += 2;
+            argc -= 2;
+        } else {
+            usage(progName);
+            printf("unknown option \"%s\"\n", argv[0]);
+            exit(EXIT_FAILURE);
+        }
     }
     if(argc != 1) {
         fprintf(stderr, "expected a filename\n");
@@ -2138,7 +2162,7 @@ int main(int argc, char **argv)
         exit(EXIT_FAILURE);
     }
 
-    VulkanApp::InitializeState();
+    VulkanApp::InitializeState(specified_gpu);
 
     glfwSetKeyCallback(window, KeyCallback);
     glfwSetMouseButtonCallback(window, ButtonCallback);
@@ -2149,12 +2173,12 @@ int main(int argc, char **argv)
 
     while (!glfwWindowShouldClose(window)) {
 
-        DrawFrame(window);
-
         // if(gStreamFrames)
-            // glfwPollEvents();
+            glfwPollEvents();
         // else
-        glfwWaitEvents();
+        // glfwWaitEvents();
+
+        DrawFrame(window);
     }
 
     Cleanup();
