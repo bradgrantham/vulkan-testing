@@ -54,13 +54,13 @@ std::map<VkResult, std::string> MapVkResultToName =
 
 #define VK_CHECK(f) \
 { \
-    VkResult result = (f); \
+    VkResult result_ = (f); \
     static const std::set<VkResult> okay{VK_SUCCESS, VK_SUBOPTIMAL_KHR, VK_THREAD_IDLE_KHR, VK_THREAD_DONE_KHR, VK_OPERATION_DEFERRED_KHR, VK_OPERATION_NOT_DEFERRED_KHR}; \
-    if(!okay.contains(result)) { \
+    if(!okay.contains(result_)) { \
 	if(MapVkResultToName.count(f) > 0) { \
-	    std::cerr << "VkResult from " STR(f) " was " << MapVkResultToName[result] << " at line " << __LINE__ << "\n"; \
+	    std::cerr << "VkResult from " STR(f) " was " << MapVkResultToName[result_] << " at line " << __LINE__ << "\n"; \
 	} else { \
-	    std::cerr << "VkResult from " STR(f) " was " << result << " at line " << __LINE__ << "\n"; \
+	    std::cerr << "VkResult from " STR(f) " was " << result_ << " at line " << __LINE__ << "\n"; \
         } \
 	exit(EXIT_FAILURE); \
     } \
@@ -296,7 +296,7 @@ VkInstance CreateInstance(bool enableValidation)
 
     uint32_t glfw_reqd_extension_count;
     const char** glfw_reqd_extensions = glfwGetRequiredInstanceExtensions(&glfw_reqd_extension_count);
-    for(int i = 0; i < glfw_reqd_extension_count; i++) {
+    for(uint32_t i = 0; i < glfw_reqd_extension_count; i++) {
         printf("glfw requested: %s\n", glfw_reqd_extensions[i]);
     }
     extension_set.insert(glfw_reqd_extensions, glfw_reqd_extensions + glfw_reqd_extension_count);
@@ -357,7 +357,7 @@ VkInstance CreateInstance(bool enableValidation)
     return instance;
 }
 
-VkPhysicalDevice ChoosePhysicalDevice(VkInstance instance, int specified_gpu)
+VkPhysicalDevice ChoosePhysicalDevice(VkInstance instance, uint32_t specified_gpu)
 {
     uint32_t gpu_count = 0;
     VK_CHECK(vkEnumeratePhysicalDevices(instance, &gpu_count, nullptr));
@@ -1106,7 +1106,7 @@ void WaitForAllDrawsCompleted()
     }
 }
 
-void DestroySwapchainData(VkDevice device)
+void DestroySwapchainData()
 {
     WaitForAllDrawsCompleted();
 
@@ -1136,8 +1136,13 @@ void DestroySwapchainData(VkDevice device)
     swapchain = VK_NULL_HANDLE;
 }
 
-void CreateSwapchainData(VkPhysicalDevice physical_device, VkDevice device, VkSurfaceKHR surface, uint32_t width, uint32_t height)
+void CreateSwapchainData(/*VkPhysicalDevice physical_device, VkDevice device, VkSurfaceKHR surface */)
 {
+    VkSurfaceCapabilitiesKHR surfcaps;
+    VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &surfcaps));
+    uint32_t width = surfcaps.currentExtent.width;
+    uint32_t height = surfcaps.currentExtent.height;
+
     VkColorSpaceKHR chosenColorSpace = chosen_surface_format.colorSpace;
 
     VkPresentModeKHR swapchainPresentMode = VK_PRESENT_MODE_FIFO_KHR;
@@ -1243,9 +1248,6 @@ void InitializeState(int specified_gpu)
     std::vector<VkSurfaceFormatKHR> surfaceFormats(formatCount);
     VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, surfaceFormats.data()));
 
-    VkSurfaceCapabilitiesKHR surfcaps;
-    VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &surfcaps));
-
     chosen_surface_format = PickSurfaceFormat(surfaceFormats.data(), formatCount);
     chosen_color_format = chosen_surface_format.format;
 
@@ -1332,7 +1334,7 @@ void InitializeState(int specified_gpu)
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .flags = 0,
         .maxSets = SUBMISSIONS_IN_FLIGHT,
-        .poolSizeCount = std::size(pool_sizes),
+        .poolSizeCount = static_cast<uint32_t>(std::size(pool_sizes)),
         .pPoolSizes = pool_sizes,
     };
     VK_CHECK(vkCreateDescriptorPool(device, &create_descriptor_pool, nullptr, &descriptor_pool));
@@ -1430,7 +1432,7 @@ void InitializeState(int specified_gpu)
 
     // Swapchain and per-swapchainimage stuff
     // Creating the framebuffer requires the renderPass
-    CreateSwapchainData(physical_device, device, surface, surfcaps.currentExtent.width, surfcaps.currentExtent.height);
+    CreateSwapchainData(/*physical_device, device, surface*/);
 
     // Create a graphics pipeline
     VkVertexInputBindingDescription vertex_input_binding {
@@ -1612,8 +1614,8 @@ void DrawFrame([[maybe_unused]] GLFWwindow *window)
     VkResult result;
     while((result = vkAcquireNextImageKHR(device, swapchain, UINT64_MAX, swapchainimage_semaphores[swapchainimage_semaphore_index], VK_NULL_HANDLE, &swapchain_index)) != VK_SUCCESS) {
         if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
-            DestroySwapchainData(device);
-            CreateSwapchainData(physical_device, device, surface, surfcaps.currentExtent.width, surfcaps.currentExtent.height);
+            DestroySwapchainData();
+            CreateSwapchainData(/*physical_device, device, surface */);
         } else {
 	    std::cerr << "VkResult from vkAcquireNextImageKHR was " << result << " at line " << __LINE__ << "\n";
             exit(EXIT_FAILURE);
@@ -1699,8 +1701,8 @@ void DrawFrame([[maybe_unused]] GLFWwindow *window)
     result = vkQueuePresentKHR(queue, &present);
     if(result != VK_SUCCESS) {
         if(result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
-            DestroySwapchainData(device);
-            CreateSwapchainData(physical_device, device, surface, surfcaps.currentExtent.width, surfcaps.currentExtent.height);
+            DestroySwapchainData();
+            CreateSwapchainData(/*physical_device, device, surface */);
         } else {
 	    std::cerr << "VkResult from vkQueuePresentKHR was " << result << " at line " << __LINE__ << "\n";
             exit(EXIT_FAILURE);
@@ -1886,7 +1888,7 @@ int pnmRead(FILE *file, int *w, int *h, float **pixels)
 {
     unsigned char	dummyByte;
     int			i;
-    float		max;
+    float		max = 1;
     char		token;
     int			width, height;
     float		*rgbPixels;
@@ -1946,9 +1948,9 @@ int pnmRead(FILE *file, int *w, int *h, float **pixels)
 	    int pixel;
 	    fscanf(file, "%d", &pixel);
 	    pixel = 1 - pixel;
-	    rgbPixels[i * 4 + 0] = pixel;
-	    rgbPixels[i * 4 + 1] = pixel;
-	    rgbPixels[i * 4 + 2] = pixel;
+	    rgbPixels[i * 4 + 0] = (float)pixel;
+	    rgbPixels[i * 4 + 1] = (float)pixel;
+	    rgbPixels[i * 4 + 2] = (float)pixel;
 	    rgbPixels[i * 4 + 3] = 1.0;
 	}
     }
@@ -2060,7 +2062,7 @@ void LoadModel(const char *filename)
 
         std::filesystem::path path {filename};
         std::filesystem::path texture_path = path.parent_path() / texture_name;
-        FILE *texture_file = fopen(texture_path.c_str(), "rb");
+        FILE *texture_file = fopen(texture_path.string().c_str(), "rb");
         if(texture_file == nullptr) {
             fprintf(stderr, "couldn't open texture file %s for reading\n", texture_name.c_str());
             exit(EXIT_FAILURE);
