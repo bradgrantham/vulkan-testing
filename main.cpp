@@ -296,21 +296,7 @@ VkInstance CreateInstance(bool enableValidation)
 
     uint32_t glfw_reqd_extension_count;
     const char** glfw_reqd_extensions = glfwGetRequiredInstanceExtensions(&glfw_reqd_extension_count);
-    for(uint32_t i = 0; i < glfw_reqd_extension_count; i++) {
-        printf("glfw requested: %s\n", glfw_reqd_extensions[i]);
-    }
     extension_set.insert(glfw_reqd_extensions, glfw_reqd_extensions + glfw_reqd_extension_count);
-
-    extension_set.insert(VK_KHR_SURFACE_EXTENSION_NAME);
-#if defined(PLATFORM_WINDOWS)
-    extension_set.insert("VK_KHR_win32_surface");
-#elif defined(PLATFORM_LINUX)
-    extension_set.insert("VK_KHR_xcb_surface"); // VK_KHR_XCB_SURFACE_EXTENSION_NAME);
-#elif defined(PLATFORM_MACOS)
-    // extension_set.insert(VK_MVK_MACOS_SURFACE_EXTENSION_NAME);
-    extension_set.insert("VK_MVK_macos_surface");
-    extension_set.insert(VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME);
-#endif
 
     if(enableValidation) {
 	layer_set.insert("VK_LAYER_KHRONOS_validation");
@@ -982,6 +968,7 @@ std::vector<VkSemaphore> swapchainimage_semaphores;
 VkImage depth_image;
 VkDeviceMemory depth_image_memory;
 VkImageView depth_image_view;
+uint32_t swapchain_width, swapchain_height;
 
 // rendering stuff - pipelines, binding & drawing commands
 VkPipelineLayout pipeline_layout;
@@ -1142,6 +1129,9 @@ void CreateSwapchainData(/*VkPhysicalDevice physical_device, VkDevice device, Vk
     VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &surfcaps));
     uint32_t width = surfcaps.currentExtent.width;
     uint32_t height = surfcaps.currentExtent.height;
+
+    swapchain_width = width;
+    swapchain_height = height;
 
     VkColorSpaceKHR chosenColorSpace = chosen_surface_format.colorSpace;
 
@@ -1565,9 +1555,6 @@ void Cleanup()
 
 void DrawFrame([[maybe_unused]] GLFWwindow *window)
 {
-    VkSurfaceCapabilitiesKHR surfcaps;
-    VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &surfcaps));
-
     auto& submission = submissions[submission_index];
 
     if(submission.draw_completed_fence_submitted) {
@@ -1587,7 +1574,7 @@ void DrawFrame([[maybe_unused]] GLFWwindow *window)
     float farClip = 1000.0; // XXX - gSceneManip->m_translation[2] + gSceneManip->m_reference_size;
     float frustumTop = tan(fov / 180.0f * 3.14159f / 2) * nearClip;
     float frustumBottom = -frustumTop;
-    float frustumRight = frustumTop * surfcaps.currentExtent.width / surfcaps.currentExtent.height;
+    float frustumRight = frustumTop * swapchain_width / swapchain_height;
     float frustumLeft = -frustumRight;
     mat4f projection = mat4f::frustum(frustumLeft, frustumRight, frustumTop, frustumBottom, nearClip, farClip);
 
@@ -1640,7 +1627,7 @@ void DrawFrame([[maybe_unused]] GLFWwindow *window)
         .sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO,
         .renderPass = renderPass,
         .framebuffer = per_image.framebuffer,
-        .renderArea = {{0, 0}, {surfcaps.currentExtent.width, surfcaps.currentExtent.height}},
+        .renderArea = {{0, 0}, {swapchain_width, swapchain_height}},
         .clearValueCount = static_cast<uint32_t>(std::size(clearValues)),
         .pClearValues = clearValues,
     };
@@ -1658,8 +1645,8 @@ void DrawFrame([[maybe_unused]] GLFWwindow *window)
     VkViewport viewport {
         .x = 0,
         .y = 0,
-        .width = (float)surfcaps.currentExtent.width,
-        .height = (float)surfcaps.currentExtent.height,
+        .width = (float)swapchain_width,
+        .height = (float)swapchain_height,
         .minDepth = 0.0f,
         .maxDepth = 1.0f,
     };
@@ -1667,7 +1654,7 @@ void DrawFrame([[maybe_unused]] GLFWwindow *window)
 
     VkRect2D scissor {
         .offset{0, 0},
-        .extent{surfcaps.currentExtent.width, surfcaps.currentExtent.height}};
+        .extent{swapchain_width, swapchain_height}};
     vkCmdSetScissor(cb, 0, 1, &scissor);
 
     vkCmdDrawIndexed(cb, drawable->triangleCount * 3, 1, 0, 0, 0);
