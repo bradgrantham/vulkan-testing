@@ -1167,7 +1167,7 @@ void CreateSwapchainData(/*VkPhysicalDevice physical_device, VkDevice device, Vk
     uint32_t height = surfcaps.currentExtent.height;
     swapchain = CreateSwapchain(device, surface, swapchain_image_count, chosen_color_format, chosen_surface_format.colorSpace, swapchain_present_mode, width, height);
 
-    auto [depth_image, depth_image_memory] = CreateBound2DImage(physical_device, device, chosen_depth_format, width, height, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    std::tie(depth_image, depth_image_memory) = CreateBound2DImage(physical_device, device, chosen_depth_format, width, height, VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     swapchain_width = width;
     swapchain_height = height;
