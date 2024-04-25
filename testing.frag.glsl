@@ -21,20 +21,6 @@ layout (location = 3) in vec2 vertex_texcoord;
 
 layout (location = 0) out vec4 outFragColor;
 
-vec3 unitvec(vec4 p1, vec4 p2)
-{
-    if(p1.w == 0 && p2.w == 0) {
-        return vec3(p2 - p1);
-    }
-    if(p1.w == 0) {
-        return vec3(-p1);
-    }
-    if(p2.w == 0) {
-        return vec3(p2);
-    }
-    return p2.xyz / p2.w - p1.xyz / p1.w;
-}
-
 void main()
 {
     vec3 normal = normalize(vertex_normal);

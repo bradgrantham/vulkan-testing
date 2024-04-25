@@ -1,2 +1,4 @@
-glslangValidator -V -e main -o testing.vert testing.vert.glsl
-glslangValidator -V -e main -o testing.frag testing.frag.glsl
+for name in testing.vert testing.frag testrt.rgen testrt.rmiss testrt.rchit
+do
+    glslangValidator -V -e main -o $name $name.glsl
+done

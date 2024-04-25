@@ -483,7 +483,7 @@ VkShaderModule CreateShaderModule(VkDevice device, const std::vector<uint32_t>& 
 }
 
 
-VkDevice CreateDevice(VkPhysicalDevice physical_device, const std::vector<const char*>& extensions, uint32_t queue_family)
+VkDevice CreateDevice(VkPhysicalDevice physical_device, const std::vector<const char*>& extensions, uint32_t queue_family, void *device_create_pnext)
 {
     float queue_priorities = 1.0f;
 
@@ -495,16 +495,18 @@ VkDevice CreateDevice(VkPhysicalDevice physical_device, const std::vector<const 
         .pQueuePriorities = &queue_priorities,
     };
 
-    VkDeviceCreateInfo create {
+    VkDeviceCreateInfo create_device {
         .sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+        .pNext = device_create_pnext,
         .flags = 0,
         .queueCreateInfoCount = 1,
         .pQueueCreateInfos = &create_queues,
         .enabledExtensionCount = static_cast<uint32_t>(extensions.size()),
         .ppEnabledExtensionNames = extensions.data(),
     };
+
     VkDevice device;
-    VK_CHECK(vkCreateDevice(physical_device, &create, nullptr, &device));
+    VK_CHECK(vkCreateDevice(physical_device, &create_device, nullptr, &device));
     return device;
 }
 
@@ -956,16 +958,14 @@ bool be_verbose = true;
 bool enable_validation = false;
 
 // non-frame stuff - instance, queue, device, etc
-VkInstance instance;
-VkPhysicalDevice physical_device;
-VkDevice device;
+VkInstance instance = VK_NULL_HANDLE;
+VkPhysicalDevice physical_device = VK_NULL_HANDLE;
+VkDevice device = VK_NULL_HANDLE;
 uint32_t graphics_queue_family = NO_QUEUE_FAMILY;
-VkSurfaceKHR surface;
-VkSwapchainKHR swapchain;
-VkCommandPool command_pool;
-VkQueue queue;
-std::vector<UniformBuffer> uniforms;
-std::vector<ImageSampler> samplers;
+VkSurfaceKHR surface = VK_NULL_HANDLE;
+VkSwapchainKHR swapchain = VK_NULL_HANDLE;
+VkCommandPool command_pool = VK_NULL_HANDLE;
+VkQueue queue = VK_NULL_HANDLE;
 
 // In flight rendering stuff
 int submission_index = 0;
@@ -995,17 +995,30 @@ struct PerSwapchainImage {
 std::vector<PerSwapchainImage> per_swapchainimage;
 uint32_t swapchainimage_semaphore_index = 0;
 std::vector<VkSemaphore> swapchainimage_semaphores;
-VkImage depth_image;
-VkDeviceMemory depth_image_memory;
-VkImageView depth_image_view;
+VkImage depth_image = VK_NULL_HANDLE;
+VkDeviceMemory depth_image_memory = VK_NULL_HANDLE;
+VkImageView depth_image_view = VK_NULL_HANDLE;
 uint32_t swapchain_width, swapchain_height;
 
-// rendering stuff - pipelines, binding & drawing commands
-VkPipelineLayout pipeline_layout;
-VkDescriptorPool descriptor_pool;
-VkRenderPass render_pass;
-VkPipeline pipeline;
-VkDescriptorSetLayout descriptor_set_layout;
+// rasterizer rendering stuff - pipelines, binding & drawing commands
+std::vector<UniformBuffer> rz_uniforms;
+std::vector<ImageSampler> rz_samplers;
+VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
+VkRenderPass render_pass = VK_NULL_HANDLE;
+VkPipeline pipeline = VK_NULL_HANDLE;
+VkDescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
+
+// ray-tracer rendering stuff - pipelines, binding & drawing commands
+PFN_vkCmdTraceRaysKHR CmdTraceRaysKHR;
+PFN_vkCreateRayTracingPipelinesKHR CreateRayTracingPipelinesKHR;
+VkPhysicalDeviceRayTracingPipelinePropertiesKHR  rt_pipeline_properties;
+std::vector<UniformBuffer> rt_uniforms;
+std::vector<ImageSampler> rt_samplers;
+VkDescriptorSetLayout ray_tracing_descriptor_set_layout = VK_NULL_HANDLE;
+VkPipelineLayout ray_tracing_pipeline_layout = VK_NULL_HANDLE;
+VkPipeline ray_tracing_pipeline = VK_NULL_HANDLE;
+
 
 // interaction data
 
@@ -1069,7 +1082,7 @@ void CreatePerSubmissionData()
         VK_CHECK(vkAllocateDescriptorSets(device, &allocate_descriptor_set, &submission.descriptor_set));
 
         int which = 0;
-        for(const auto& uniform: uniforms) {
+        for(const auto& uniform: rz_uniforms) {
             auto &uniform_buffer = submission.uniform_buffers[which];
 
             uniform_buffer.Create(physical_device, device, uniform.size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
@@ -1092,11 +1105,11 @@ void CreatePerSubmissionData()
             which++;
         }
 
-        if(samplers.size() != 1) {
+        if(rz_samplers.size() != 1) {
             // XXX only one texture and one drawable at the moment
             throw std::runtime_error("More than one sampler is not yet supported");
         }
-        for(const auto& sampler: samplers) {
+        for(const auto& sampler: rz_samplers) {
             VkDescriptorImageInfo image_info {
                 .sampler = drawable->textureSampler,
                 .imageView = drawable->textureImageView,
@@ -1201,77 +1214,18 @@ void CreateSwapchainData(/*VkPhysicalDevice physical_device, VkDevice device, Vk
     }
 }
 
-void InitializeState(uint32_t specified_gpu)
+void CreateRasterizationPipeline()
 {
-    // non-frame stuff
-    physical_device = ChoosePhysicalDevice(instance, specified_gpu);
-
-    uint32_t formatCount;
-    VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, nullptr));
-    std::vector<VkSurfaceFormatKHR> surfaceFormats(formatCount);
-    VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, surfaceFormats.data()));
-
-    VkSurfaceCapabilitiesKHR surfcaps;
-    VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &surfcaps));
-
-    chosen_surface_format = PickSurfaceFormat(surfaceFormats);
-    chosen_color_format = chosen_surface_format.format;
-
-    graphics_queue_family = FindQueueFamily(physical_device, VK_QUEUE_GRAPHICS_BIT);
-    if(graphics_queue_family == NO_QUEUE_FAMILY) {
-        fprintf(stderr, "couldn't find a graphics queue\n");
-        abort();
-    }
-
-    if(be_verbose) {
-        VkPhysicalDeviceMemoryProperties memory_properties;
-        vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
-        PrintDeviceInformation(physical_device, memory_properties);
-    }
-
-    std::vector<const char*> device_extensions;
-
-    device_extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
-
-#ifdef PLATFORM_MACOS
-    device_extensions.push_back("VK_KHR_portability_subset" /* VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME */);
-#endif
-
-#if 0
-    device_extensions.insert(extensions.end(), {
-        VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
-        VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
-        VK_KHR_RAY_QUERY_EXTENSION_NAME
-        });
-#endif
-
-    if (be_verbose) {
-        for (const auto& e : device_extensions) {
-            printf("asked for %s\n", e);
-        }
-    }
-
-    device = CreateDevice(physical_device, device_extensions, graphics_queue_family);
-
-    vkGetDeviceQueue(device, graphics_queue_family, 0, &queue);
-
-    VkCommandPoolCreateInfo create_command_pool {
-        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
-        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
-        .queueFamilyIndex = graphics_queue_family,
-    };
-    VK_CHECK(vkCreateCommandPool(device, &create_command_pool, nullptr, &command_pool));
-
     // XXX Should probe these from shader code somehow
     // XXX at the moment this order is assumed for "struct submission"
-    // uniforms Buffer structs, see *_uniforms setting code in DrawFrame
-    uniforms.push_back({0, VK_SHADER_STAGE_VERTEX_BIT, sizeof(VertexUniforms)});
-    uniforms.push_back({1, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(FragmentUniforms)});
-    uniforms.push_back({2, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(ShadingUniforms)});
-    samplers.push_back({3, VK_SHADER_STAGE_FRAGMENT_BIT});
+    // rz_uniforms Buffer structs, see *_uniforms setting code in DrawFrame
+    rz_uniforms.push_back({0, VK_SHADER_STAGE_VERTEX_BIT, sizeof(VertexUniforms)});
+    rz_uniforms.push_back({1, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(FragmentUniforms)});
+    rz_uniforms.push_back({2, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(ShadingUniforms)});
+    rz_samplers.push_back({3, VK_SHADER_STAGE_FRAGMENT_BIT});
 
     std::vector<VkDescriptorSetLayoutBinding> layout_bindings;
-    for(const auto& uniform: uniforms) {
+    for(const auto& uniform: rz_uniforms) {
         VkDescriptorSetLayoutBinding binding {
             .binding = uniform.binding,
             .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
@@ -1281,7 +1235,7 @@ void InitializeState(uint32_t specified_gpu)
         };
         layout_bindings.push_back(binding);
     }
-    for(const auto& sampler: samplers) {
+    for(const auto& sampler: rz_samplers) {
         VkDescriptorSetLayoutBinding binding {
             .binding = sampler.binding,
             .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
@@ -1293,8 +1247,8 @@ void InitializeState(uint32_t specified_gpu)
     }
 
     VkDescriptorPoolSize pool_sizes[] {
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(uniforms.size()) * SUBMISSIONS_IN_FLIGHT },
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(samplers.size()) * SUBMISSIONS_IN_FLIGHT },
+        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(rz_uniforms.size()) * SUBMISSIONS_IN_FLIGHT },
+        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(rz_samplers.size()) * SUBMISSIONS_IN_FLIGHT },
     };
     VkDescriptorPoolCreateInfo create_descriptor_pool {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
@@ -1317,7 +1271,7 @@ void InitializeState(uint32_t specified_gpu)
 
     CreatePerSubmissionData();
 
-// rendering stuff - pipelines, binding & drawing commands
+    // ---------- Graphics pipeline
 
     VkAttachmentDescription color_attachment_description {
         .flags = 0,
@@ -1484,13 +1438,14 @@ void InitializeState(uint32_t specified_gpu)
     };
     VK_CHECK(vkCreatePipelineLayout(device, &create_layout, nullptr, &pipeline_layout));
 
-    std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
 
     std::vector<std::pair<std::string, VkShaderStageFlagBits>> shader_binaries {
         {"testing.vert", VK_SHADER_STAGE_VERTEX_BIT},
         {"testing.frag", VK_SHADER_STAGE_FRAGMENT_BIT}
     };
     
+    std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
+
     for(const auto& [name, stage]: shader_binaries) {
         std::vector<uint32_t> shader_code = GetFileAsCode(name);
         VkShaderModule shader_module = CreateShaderModule(device, shader_code);
@@ -1522,10 +1477,286 @@ void InitializeState(uint32_t specified_gpu)
     VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &create_pipeline, nullptr, &pipeline));
 }
 
+void CreateRayTracingPipeline()
+{
+    // XXX Should probe these from shader code somehow
+    // XXX at the moment this order is assumed for "struct submission"
+    // rt_uniforms Buffer structs, see *_uniforms setting code in DrawFrame
+    rt_samplers.push_back({0, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR});
+    // rt_uniforms.push_back({0, VK_SHADER_STAGE_VERTEX_BIT, sizeof(VertexUniforms)});
+    // rt_uniforms.push_back({1, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(FragmentUniforms)});
+    // rt_uniforms.push_back({2, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(ShadingUniforms)});
+
+    std::vector<VkDescriptorSetLayoutBinding> layout_bindings;
+    if(!rt_uniforms.empty()) {
+        for(const auto& uniform: rt_uniforms) {
+            VkDescriptorSetLayoutBinding binding {
+                .binding = uniform.binding,
+                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+                .descriptorCount = 1,
+                .stageFlags = uniform.stageFlags,
+                .pImmutableSamplers = nullptr,
+            };
+            layout_bindings.push_back(binding);
+        }
+    }
+    if(!rt_samplers.empty()) {
+        for(const auto& sampler: rt_samplers) {
+            VkDescriptorSetLayoutBinding binding {
+                .binding = sampler.binding,
+                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+                .descriptorCount = 1,
+                .stageFlags = sampler.stageFlags,
+                .pImmutableSamplers = nullptr,
+            };
+            layout_bindings.push_back(binding);
+        }
+    }
+
+    VkDescriptorSetLayoutCreateInfo descriptor_set_layout_create {
+        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
+        .flags = 0,
+        .bindingCount = static_cast<uint32_t>(layout_bindings.size()),
+        .pBindings = layout_bindings.data(),
+    };
+    VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptor_set_layout_create, nullptr, &ray_tracing_descriptor_set_layout));
+
+    VkPipelineLayoutCreateInfo create_rt_pipeline_layout {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1,
+        .pSetLayouts = &ray_tracing_descriptor_set_layout,
+    };
+
+    VK_CHECK(vkCreatePipelineLayout(device, &create_rt_pipeline_layout, nullptr, &ray_tracing_pipeline_layout));
+
+    std::vector<std::tuple<std::string, VkShaderStageFlagBits, VkRayTracingShaderGroupTypeKHR>> rt_shader_binaries {
+        {"testrt.rgen", VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR},
+        {"testrt.rchit", VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR},
+        {"testrt.rmiss", VK_SHADER_STAGE_MISS_BIT_KHR, VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR},
+    };
+
+    std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
+    std::vector<VkRayTracingShaderGroupCreateInfoKHR> shader_groups;
+    
+    for(const auto& [name, stage, group_type]: rt_shader_binaries) {
+        std::vector<uint32_t> shader_code = GetFileAsCode(name);
+        VkShaderModule shader_module = CreateShaderModule(device, shader_code);
+
+        VkPipelineShaderStageCreateInfo shader_create {
+            .sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            .stage = stage,
+            .module = shader_module,
+            .pName = "main",
+        };
+        shader_stages.push_back(shader_create);
+
+        uint32_t stage_index = static_cast<uint32_t>(shader_stages.size()) - 1;
+        VkRayTracingShaderGroupCreateInfoKHR shader_group {
+            .sType = VK_STRUCTURE_TYPE_RAY_TRACING_SHADER_GROUP_CREATE_INFO_KHR,
+            .type = group_type,
+            .generalShader = (group_type == VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR) ? stage_index : VK_SHADER_UNUSED_KHR,
+            .closestHitShader = (group_type == VK_RAY_TRACING_SHADER_GROUP_TYPE_TRIANGLES_HIT_GROUP_KHR) ? stage_index : VK_SHADER_UNUSED_KHR,
+            .anyHitShader = VK_SHADER_UNUSED_KHR,
+            .intersectionShader = VK_SHADER_UNUSED_KHR,
+        };
+        shader_groups.push_back(shader_group);
+    }
+
+    VkRayTracingPipelineCreateInfoKHR create_rt_pipeline {
+        .sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR,
+        .pNext = nullptr,
+        .flags = 0,
+        .stageCount = static_cast<uint32_t>(shader_stages.size()) - 1,
+        .pStages = shader_stages.data(),
+        .groupCount = static_cast<uint32_t>(shader_groups.size()) - 1,
+        .pGroups = shader_groups.data(),
+        .maxPipelineRayRecursionDepth = 1,
+        .pLibraryInfo = nullptr,
+        .pLibraryInterface = nullptr,
+        .pDynamicState = nullptr,
+        .layout = ray_tracing_pipeline_layout,
+        .basePipelineHandle = VK_NULL_HANDLE,
+        .basePipelineIndex = 0,
+    };
+
+    VK_CHECK(CreateRayTracingPipelinesKHR(device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &create_rt_pipeline, nullptr, &ray_tracing_pipeline));
+}
+
+void InitializeState(uint32_t specified_gpu)
+{
+    // non-frame stuff
+    physical_device = ChoosePhysicalDevice(instance, specified_gpu);
+
+    uint32_t formatCount;
+    VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, nullptr));
+    std::vector<VkSurfaceFormatKHR> surfaceFormats(formatCount);
+    VK_CHECK(vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &formatCount, surfaceFormats.data()));
+
+    VkSurfaceCapabilitiesKHR surfcaps;
+    VK_CHECK(vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &surfcaps));
+
+    chosen_surface_format = PickSurfaceFormat(surfaceFormats);
+    chosen_color_format = chosen_surface_format.format;
+
+    graphics_queue_family = FindQueueFamily(physical_device, VK_QUEUE_GRAPHICS_BIT);
+    if(graphics_queue_family == NO_QUEUE_FAMILY) {
+        fprintf(stderr, "couldn't find a graphics queue\n");
+        abort();
+    }
+
+    if(be_verbose) {
+        VkPhysicalDeviceMemoryProperties memory_properties;
+        vkGetPhysicalDeviceMemoryProperties(physical_device, &memory_properties);
+        PrintDeviceInformation(physical_device, memory_properties);
+    }
+
+    std::vector<const char*> device_extensions;
+
+    device_extensions.push_back(VK_KHR_SWAPCHAIN_EXTENSION_NAME);
+
+#ifdef PLATFORM_MACOS
+    device_extensions.push_back("VK_KHR_portability_subset" /* VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME */);
+#endif
+
+#if 1
+    device_extensions.insert(device_extensions.end(), {
+        VK_KHR_ACCELERATION_STRUCTURE_EXTENSION_NAME,
+        VK_KHR_RAY_TRACING_PIPELINE_EXTENSION_NAME,
+        VK_KHR_DEFERRED_HOST_OPERATIONS_EXTENSION_NAME,
+        VK_KHR_RAY_QUERY_EXTENSION_NAME
+        });
+#endif
+
+    if (be_verbose) {
+        for (const auto& e : device_extensions) {
+            printf("asked for %s\n", e);
+        }
+    }
+
+    // Enable features required for ray tracing using feature chaining via pNext		
+    VkPhysicalDeviceBufferDeviceAddressFeatures enable_buffer_device_address{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_BUFFER_DEVICE_ADDRESS_FEATURES,
+        .bufferDeviceAddress = VK_TRUE,
+    };
+
+    VkPhysicalDeviceRayTracingPipelineFeaturesKHR enable_ray_tracing_pipeline{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR,
+        .pNext = &enable_buffer_device_address,
+        .rayTracingPipeline = VK_TRUE,
+    };
+
+    VkPhysicalDeviceAccelerationStructureFeaturesKHR enable_acceleration_structure{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR,
+        .pNext = &enable_ray_tracing_pipeline,
+        .accelerationStructure = VK_TRUE,
+    };
+
+    device = CreateDevice(physical_device, device_extensions, graphics_queue_family, &enable_acceleration_structure);
+
+    // Ray-tracing extensions and properties
+    CmdTraceRaysKHR = (PFN_vkCmdTraceRaysKHR)vkGetDeviceProcAddr(device, "vkCmdTraceRaysKHR");
+    CreateRayTracingPipelinesKHR = (PFN_vkCreateRayTracingPipelinesKHR)vkGetDeviceProcAddr(device, "vkCreateRayTracingPipelinesKHR");
+
+    rt_pipeline_properties.sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_PROPERTIES_KHR;
+    VkPhysicalDeviceProperties2 device_properties2{
+        .sType = VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2,
+        .pNext = &rt_pipeline_properties,
+    };
+    vkGetPhysicalDeviceProperties2(physical_device, &device_properties2);
+
+    // Queues, CommmandPools, etc
+    vkGetDeviceQueue(device, graphics_queue_family, 0, &queue);
+
+    VkCommandPoolCreateInfo create_command_pool {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+        .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT,
+        .queueFamilyIndex = graphics_queue_family,
+    };
+    VK_CHECK(vkCreateCommandPool(device, &create_command_pool, nullptr, &command_pool));
+
+    CreateRasterizationPipeline();
+
+    CreateRayTracingPipeline();
+}
+
 void Cleanup()
 {
     WaitForAllDrawsCompleted();
     drawable->ReleaseDeviceData(device);
+}
+
+template <typename T>
+T align(T value, T align)
+{
+    return ((value + align - 1) / align) * align;
+}
+
+void DrawFrameRT([[maybe_unused]] GLFWwindow *window)
+{
+    frame += 1;
+
+    auto& submission = submissions[submission_index];
+
+    auto cb = submission.command_buffer;
+
+    VkCommandBufferBeginInfo begin {
+        .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+        .flags = 0, // VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+        .pInheritanceInfo = nullptr,
+    };
+    VK_CHECK(vkResetCommandBuffer(cb, 0));
+    VK_CHECK(vkBeginCommandBuffer(cb, &begin));
+
+    uint32_t handle_stride = align(rt_pipeline_properties.shaderGroupHandleSize, rt_pipeline_properties.shaderGroupHandleAlignment);
+ 
+    VkStridedDeviceAddressRegionKHR raygenShaderBindingTable{
+        .deviceAddress = 0, // getBufferDeviceAddress(raygenShaderBindingTable.buffer);
+        .stride = handle_stride,
+        .size = handle_stride,
+    };
+    VkStridedDeviceAddressRegionKHR missShaderBindingTable{
+        .deviceAddress = 0, // getBufferDeviceAddress(raygenShaderBindingTable.buffer);
+        .stride = handle_stride,
+        .size = handle_stride,
+    };
+    VkStridedDeviceAddressRegionKHR hitShaderBindingTable{
+        .deviceAddress = 0, // getBufferDeviceAddress(raygenShaderBindingTable.buffer);
+        .stride = handle_stride,
+        .size = handle_stride,
+    };
+    VkStridedDeviceAddressRegionKHR callableShaderBindingTable{
+        .deviceAddress = 0, // getBufferDeviceAddress(raygenShaderBindingTable.buffer);
+        .stride = handle_stride,
+        .size = handle_stride,
+    };
+
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, ray_tracing_pipeline);
+
+    VulkanApp::CmdTraceRaysKHR(
+        cb,
+        &raygenShaderBindingTable,
+        &missShaderBindingTable,
+        &hitShaderBindingTable,
+        &callableShaderBindingTable,
+        swapchain_width,
+        swapchain_height,
+        1);
+
+    VK_CHECK(vkEndCommandBuffer(cb));
+
+    VkPipelineStageFlags waitdststagemask = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
+    VkSubmitInfo submit {
+        .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+        .waitSemaphoreCount = 1,
+        .pWaitSemaphores = &swapchainimage_semaphores[swapchainimage_semaphore_index],
+        .pWaitDstStageMask = &waitdststagemask,
+        .commandBufferCount = 1,
+        .pCommandBuffers = &cb,
+        .signalSemaphoreCount = 1,
+        .pSignalSemaphores = &submission.draw_completed_semaphore,
+    };
+    VK_CHECK(vkQueueSubmit(queue, 1, &submit, submission.draw_completed_fence));
+    submission.draw_completed_fence_submitted = true;
 }
 
 void DrawFrame([[maybe_unused]] GLFWwindow *window)
@@ -2088,6 +2319,10 @@ int main(int argc, char **argv)
             specified_gpu = atoi(argv[1]);
             argv += 2;
             argc -= 2;
+        } else if(strcmp(argv[0], "--validate") == 0) {
+            enable_validation = true;
+            argv += 1;
+            argc -= 1;
         } else {
             usage(progName);
             printf("unknown option \"%s\"\n", argv[0]);
@@ -2133,7 +2368,7 @@ int main(int argc, char **argv)
     glfwSetCursorPosCallback(window, MotionCallback);
     glfwSetScrollCallback(window, ScrollCallback);
     // glfwSetFramebufferSizeCallback(window, ResizeCallback);
-    glfwSetWindowRefreshCallback(window, DrawFrame);
+    glfwSetWindowRefreshCallback(window, DrawFrameRT);
 
     while (!glfwWindowShouldClose(window)) {
 
@@ -2142,7 +2377,7 @@ int main(int argc, char **argv)
         // else
         // glfwWaitEvents();
 
-        DrawFrame(window);
+        DrawFrameRT(window);
     }
 
     Cleanup();
