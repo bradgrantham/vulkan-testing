@@ -6,7 +6,8 @@ set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules)
 
 find_package(Vulkan REQUIRED)
 
-find_package(GLFW3 3.3 CONFIG REQUIRED)
+# find_package(GLFW3 3.3 CONFIG REQUIRED)
+find_package(glfw3 3.3 CONFIG REQUIRED)
 
 if(NOT Vulkan_FOUND)
     message(
@@ -25,5 +26,6 @@ set_property(TARGET vulkan_test PROPERTY CXX_STANDARD 20)
 if(MSVC)
   target_compile_options(vulkan_test PRIVATE /W4 /WX)
 else()
-  target_compile_options(vulkan_test PRIVATE -Wall -Wextra -Wpedantic -Werror)
+  target_compile_options(vulkan_test PRIVATE -Wall -Wextra -Wpedantic -Werror -Wno-missing-field-initializers)
 endif()
+
