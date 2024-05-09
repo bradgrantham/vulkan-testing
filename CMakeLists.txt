@@ -6,8 +6,18 @@ set(CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/cmake/modules)
 
 find_package(Vulkan REQUIRED)
 
-# find_package(GLFW3 3.3 CONFIG REQUIRED)
-find_package(glfw3 3.3 CONFIG REQUIRED)
+
+find_package(glfw3 3.3 CONFIG) #  REQUIRED)
+
+if(NOT glfw3_FOUND)
+    find_package(GLFW3 3.3 CONFIG) # REQUIRED)
+    if(NOT GLFW3_FOUND)
+        message(
+            FATAL_ERROR
+            "GLFW3 package was not found under name GLFW3 nor glfw3"
+        )
+    endif()
+endif()
 
 if(NOT Vulkan_FOUND)
     message(

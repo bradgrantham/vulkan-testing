@@ -974,7 +974,8 @@ struct Submission {
     bool draw_completed_fence_submitted { false };
     VkFence draw_completed_fence { VK_NULL_HANDLE };
     VkSemaphore draw_completed_semaphore { VK_NULL_HANDLE };
-    VkDescriptorSet descriptor_set { VK_NULL_HANDLE };
+    VkDescriptorSet rz_descriptor_set { VK_NULL_HANDLE };
+    VkDescriptorSet rt_descriptor_set { VK_NULL_HANDLE };
     Buffer uniform_buffers[3];
 };
 static constexpr int SUBMISSIONS_IN_FLIGHT = 2;
@@ -1003,11 +1004,11 @@ uint32_t swapchain_width, swapchain_height;
 // rasterizer rendering stuff - pipelines, binding & drawing commands
 std::vector<UniformBuffer> rz_uniforms;
 std::vector<ImageSampler> rz_samplers;
-VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
-VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
+VkPipelineLayout rz_pipeline_layout = VK_NULL_HANDLE;
+VkDescriptorPool rz_descriptor_pool = VK_NULL_HANDLE;
 VkRenderPass render_pass = VK_NULL_HANDLE;
-VkPipeline pipeline = VK_NULL_HANDLE;
-VkDescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
+VkPipeline rz_pipeline = VK_NULL_HANDLE;
+VkDescriptorSetLayout rz_descriptor_set_layout = VK_NULL_HANDLE;
 
 // ray-tracer rendering stuff - pipelines, binding & drawing commands
 PFN_vkCmdTraceRaysKHR CmdTraceRaysKHR;
@@ -1015,9 +1016,10 @@ PFN_vkCreateRayTracingPipelinesKHR CreateRayTracingPipelinesKHR;
 VkPhysicalDeviceRayTracingPipelinePropertiesKHR  rt_pipeline_properties;
 std::vector<UniformBuffer> rt_uniforms;
 std::vector<ImageSampler> rt_samplers;
-VkDescriptorSetLayout ray_tracing_descriptor_set_layout = VK_NULL_HANDLE;
-VkPipelineLayout ray_tracing_pipeline_layout = VK_NULL_HANDLE;
-VkPipeline ray_tracing_pipeline = VK_NULL_HANDLE;
+VkDescriptorPool rt_descriptor_pool = VK_NULL_HANDLE;
+VkDescriptorSetLayout rt_descriptor_set_layout = VK_NULL_HANDLE;
+VkPipelineLayout rt_pipeline_layout = VK_NULL_HANDLE;
+VkPipeline rt_pipeline = VK_NULL_HANDLE;
 
 
 // interaction data
@@ -1044,91 +1046,6 @@ void InitializeInstance()
         PrintImplementationInformation();
     }
     instance = CreateInstance(enable_validation);
-}
-
-void CreatePerSubmissionData()
-{
-    for(uint32_t i = 0; i < SUBMISSIONS_IN_FLIGHT; i++) {
-
-        auto& submission = submissions[i];
-
-        const VkCommandBufferAllocateInfo allocate {
-            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
-            .commandPool = command_pool,
-            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
-            .commandBufferCount = 1,
-        };
-        VK_CHECK(vkAllocateCommandBuffers(device, &allocate, &submission.command_buffer));
-
-        VkFenceCreateInfo fence_create {
-            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
-            .flags = 0,
-        };
-        VK_CHECK(vkCreateFence(device, &fence_create, nullptr, &submission.draw_completed_fence));
-        submission.draw_completed_fence_submitted = false;
-
-        VkSemaphoreCreateInfo sema_create {
-            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
-            .flags = 0,
-        };
-        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &submission.draw_completed_semaphore));
-
-        VkDescriptorSetAllocateInfo allocate_descriptor_set {
-            .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-            .descriptorPool = descriptor_pool,
-            .descriptorSetCount = 1,
-            .pSetLayouts = &descriptor_set_layout,
-        };
-        VK_CHECK(vkAllocateDescriptorSets(device, &allocate_descriptor_set, &submission.descriptor_set));
-
-        int which = 0;
-        for(const auto& uniform: rz_uniforms) {
-            auto &uniform_buffer = submission.uniform_buffers[which];
-
-            uniform_buffer.Create(physical_device, device, uniform.size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-            VK_CHECK(vkMapMemory(device, uniform_buffer.mem, 0, uniform.size, 0, &uniform_buffer.mapped));
-
-            VkDescriptorBufferInfo buffer_info { uniform_buffer.buf, 0, uniform.size };
-            VkWriteDescriptorSet write_descriptor_set {
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = submission.descriptor_set,
-                .dstBinding = uniform.binding,
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                .pImageInfo = nullptr,
-                .pBufferInfo = &buffer_info,
-                .pTexelBufferView = nullptr,
-            };
-            vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, nullptr);
-
-            which++;
-        }
-
-        if(rz_samplers.size() != 1) {
-            // XXX only one texture and one drawable at the moment
-            throw std::runtime_error("More than one sampler is not yet supported");
-        }
-        for(const auto& sampler: rz_samplers) {
-            VkDescriptorImageInfo image_info {
-                .sampler = drawable->textureSampler,
-                .imageView = drawable->textureImageView,
-                .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-            };
-            VkWriteDescriptorSet write_descriptor_set {
-                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-                .dstSet = submission.descriptor_set,
-                .dstBinding = sampler.binding,
-                .dstArrayElement = 0,
-                .descriptorCount = 1,
-                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                .pImageInfo = &image_info,
-                .pBufferInfo = nullptr,
-                .pTexelBufferView = nullptr,
-            };
-            vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, nullptr);
-        }
-    }
 }
 
 void WaitForAllDrawsCompleted()
@@ -1257,7 +1174,7 @@ void CreateRasterizationPipeline()
         .poolSizeCount = static_cast<uint32_t>(std::size(pool_sizes)),
         .pPoolSizes = pool_sizes,
     };
-    VK_CHECK(vkCreateDescriptorPool(device, &create_descriptor_pool, nullptr, &descriptor_pool));
+    VK_CHECK(vkCreateDescriptorPool(device, &create_descriptor_pool, nullptr, &rz_descriptor_pool));
 
     VkDescriptorSetLayoutCreateInfo descriptor_set_layout_create {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -1265,11 +1182,9 @@ void CreateRasterizationPipeline()
         .bindingCount = static_cast<uint32_t>(layout_bindings.size()),
         .pBindings = layout_bindings.data(),
     };
-    VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptor_set_layout_create, nullptr, &descriptor_set_layout));
+    VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptor_set_layout_create, nullptr, &rz_descriptor_set_layout));
 
     drawable->CreateDeviceData(physical_device, device, queue);
-
-    CreatePerSubmissionData();
 
     // ---------- Graphics pipeline
 
@@ -1434,9 +1349,9 @@ void CreateRasterizationPipeline()
     VkPipelineLayoutCreateInfo create_layout {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
-        .pSetLayouts = &descriptor_set_layout,
+        .pSetLayouts = &rz_descriptor_set_layout,
     };
-    VK_CHECK(vkCreatePipelineLayout(device, &create_layout, nullptr, &pipeline_layout));
+    VK_CHECK(vkCreatePipelineLayout(device, &create_layout, nullptr, &rz_pipeline_layout));
 
 
     std::vector<std::pair<std::string, VkShaderStageFlagBits>> shader_binaries {
@@ -1470,11 +1385,11 @@ void CreateRasterizationPipeline()
         .pDepthStencilState = &depth_stencil_state,
         .pColorBlendState = &color_blend_state,
         .pDynamicState = &dynamicState,
-        .layout = pipeline_layout,
+        .layout = rz_pipeline_layout,
         .renderPass = render_pass,
     };
 
-    VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &create_pipeline, nullptr, &pipeline));
+    VK_CHECK(vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &create_pipeline, nullptr, &rz_pipeline));
 }
 
 void CreateRayTracingPipeline()
@@ -1519,15 +1434,16 @@ void CreateRayTracingPipeline()
         .bindingCount = static_cast<uint32_t>(layout_bindings.size()),
         .pBindings = layout_bindings.data(),
     };
-    VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptor_set_layout_create, nullptr, &ray_tracing_descriptor_set_layout));
+    VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptor_set_layout_create, nullptr, &rt_descriptor_set_layout));
 
-    VkPipelineLayoutCreateInfo create_rt_pipeline_layout {
+    VkPipelineLayoutCreateInfo create_pipeline_layout {
         .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
         .setLayoutCount = 1,
-        .pSetLayouts = &ray_tracing_descriptor_set_layout,
+        .pSetLayouts = &rt_descriptor_set_layout,
     };
 
-    VK_CHECK(vkCreatePipelineLayout(device, &create_rt_pipeline_layout, nullptr, &ray_tracing_pipeline_layout));
+    VK_CHECK(vkCreatePipelineLayout(device, &create_pipeline_layout, nullptr, &rt_pipeline_layout));
+    assert(rt_pipeline_layout != VK_NULL_HANDLE);
 
     std::vector<std::tuple<std::string, VkShaderStageFlagBits, VkRayTracingShaderGroupTypeKHR>> rt_shader_binaries {
         {"testrt.rgen", VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR},
@@ -1562,7 +1478,7 @@ void CreateRayTracingPipeline()
         shader_groups.push_back(shader_group);
     }
 
-    VkRayTracingPipelineCreateInfoKHR create_rt_pipeline {
+    VkRayTracingPipelineCreateInfoKHR create_pipeline {
         .sType = VK_STRUCTURE_TYPE_RAY_TRACING_PIPELINE_CREATE_INFO_KHR,
         .pNext = nullptr,
         .flags = 0,
@@ -1574,13 +1490,165 @@ void CreateRayTracingPipeline()
         .pLibraryInfo = nullptr,
         .pLibraryInterface = nullptr,
         .pDynamicState = nullptr,
-        .layout = ray_tracing_pipeline_layout,
+        .layout = rt_pipeline_layout,
         .basePipelineHandle = VK_NULL_HANDLE,
         .basePipelineIndex = 0,
     };
 
-    VK_CHECK(CreateRayTracingPipelinesKHR(device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &create_rt_pipeline, nullptr, &ray_tracing_pipeline));
+    VK_CHECK(CreateRayTracingPipelinesKHR(device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &create_pipeline, nullptr, &rt_pipeline));
 }
+
+void CreateRasterizationPerSubmissionData(Submission& submission)
+{
+    VkDescriptorSetAllocateInfo allocate_descriptor_set {
+	.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+	    .descriptorPool = rz_descriptor_pool,
+	    .descriptorSetCount = 1,
+	    .pSetLayouts = &rz_descriptor_set_layout,
+    };
+    VK_CHECK(vkAllocateDescriptorSets(device, &allocate_descriptor_set, &submission.rz_descriptor_set));
+
+    int which = 0;
+    for(const auto& uniform: rz_uniforms) {
+	auto &uniform_buffer = submission.uniform_buffers[which];
+
+	uniform_buffer.Create(physical_device, device, uniform.size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	VK_CHECK(vkMapMemory(device, uniform_buffer.mem, 0, uniform.size, 0, &uniform_buffer.mapped));
+
+	VkDescriptorBufferInfo buffer_info { uniform_buffer.buf, 0, uniform.size };
+	VkWriteDescriptorSet write_descriptor_set {
+	    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.dstSet = submission.rz_descriptor_set,
+		.dstBinding = uniform.binding,
+		.dstArrayElement = 0,
+		.descriptorCount = 1,
+		.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+		.pImageInfo = nullptr,
+		.pBufferInfo = &buffer_info,
+		.pTexelBufferView = nullptr,
+	};
+	vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, nullptr);
+
+	which++;
+    }
+
+    if(rz_samplers.size() != 1) {
+	// XXX only one texture and one drawable at the moment
+	throw std::runtime_error("More than one sampler is not yet supported");
+    }
+    for(const auto& sampler: rz_samplers) {
+	VkDescriptorImageInfo image_info {
+	    .sampler = drawable->textureSampler,
+		.imageView = drawable->textureImageView,
+		.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+	};
+	VkWriteDescriptorSet write_descriptor_set {
+	    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.dstSet = submission.rz_descriptor_set,
+		.dstBinding = sampler.binding,
+		.dstArrayElement = 0,
+		.descriptorCount = 1,
+		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		.pImageInfo = &image_info,
+		.pBufferInfo = nullptr,
+		.pTexelBufferView = nullptr,
+	};
+	vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, nullptr);
+    }
+}
+
+void CreateRayTracingPerSubmissionData(Submission& submission)
+{
+    VkDescriptorSetAllocateInfo allocate_descriptor_set {
+	.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
+	    .descriptorPool = rt_descriptor_pool,
+	    .descriptorSetCount = 1,
+	    .pSetLayouts = &rt_descriptor_set_layout,
+    };
+    VK_CHECK(vkAllocateDescriptorSets(device, &allocate_descriptor_set, &submission.rt_descriptor_set));
+
+    int which = 0;
+    for(const auto& uniform: rt_uniforms) {
+	auto &uniform_buffer = submission.uniform_buffers[which];
+
+	uniform_buffer.Create(physical_device, device, uniform.size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+	VK_CHECK(vkMapMemory(device, uniform_buffer.mem, 0, uniform.size, 0, &uniform_buffer.mapped));
+
+	VkDescriptorBufferInfo buffer_info { uniform_buffer.buf, 0, uniform.size };
+	VkWriteDescriptorSet write_descriptor_set {
+	    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.dstSet = submission.rt_descriptor_set,
+		.dstBinding = uniform.binding,
+		.dstArrayElement = 0,
+		.descriptorCount = 1,
+		.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+		.pImageInfo = nullptr,
+		.pBufferInfo = &buffer_info,
+		.pTexelBufferView = nullptr,
+	};
+	vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, nullptr);
+
+	which++;
+    }
+
+    if(rt_samplers.size() != 1) {
+	// XXX only one texture and one drawable at the moment
+	throw std::runtime_error("More than one sampler is not yet supported");
+    }
+    for(const auto& sampler: rt_samplers) {
+	VkDescriptorImageInfo image_info {
+	    .sampler = drawable->textureSampler,
+		.imageView = drawable->textureImageView,
+		.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+	};
+	VkWriteDescriptorSet write_descriptor_set {
+	    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+		.dstSet = submission.rt_descriptor_set,
+		.dstBinding = sampler.binding,
+		.dstArrayElement = 0,
+		.descriptorCount = 1,
+		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
+		.pImageInfo = &image_info,
+		.pBufferInfo = nullptr,
+		.pTexelBufferView = nullptr,
+	};
+	vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, nullptr);
+    }
+}
+
+void CreatePerSubmissionData()
+{
+    for(uint32_t i = 0; i < SUBMISSIONS_IN_FLIGHT; i++) {
+
+        auto& submission = submissions[i];
+
+        const VkCommandBufferAllocateInfo allocate {
+            .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+            .commandPool = command_pool,
+            .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+            .commandBufferCount = 1,
+        };
+        VK_CHECK(vkAllocateCommandBuffers(device, &allocate, &submission.command_buffer));
+
+        VkFenceCreateInfo fence_create {
+            .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+            .flags = 0,
+        };
+        VK_CHECK(vkCreateFence(device, &fence_create, nullptr, &submission.draw_completed_fence));
+        submission.draw_completed_fence_submitted = false;
+
+        VkSemaphoreCreateInfo sema_create {
+            .sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO,
+            .flags = 0,
+        };
+        VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &submission.draw_completed_semaphore));
+
+	CreateRasterizationPerSubmissionData(submission);
+
+	CreateRayTracingPerSubmissionData(submission);
+    }
+}
+
 
 void InitializeState(uint32_t specified_gpu)
 {
@@ -1677,6 +1745,8 @@ void InitializeState(uint32_t specified_gpu)
     CreateRasterizationPipeline();
 
     CreateRayTracingPipeline();
+
+    CreatePerSubmissionData();
 }
 
 void Cleanup()
@@ -1730,7 +1800,7 @@ void DrawFrameRT([[maybe_unused]] GLFWwindow *window)
         .size = handle_stride,
     };
 
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, ray_tracing_pipeline);
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rt_pipeline);
 
     VulkanApp::CmdTraceRaysKHR(
         cb,
@@ -1841,9 +1911,9 @@ void DrawFrame([[maybe_unused]] GLFWwindow *window)
     vkCmdBeginRenderPass(cb, &beginRenderpass, VK_SUBPASS_CONTENTS_INLINE);
 
     // 6. Bind the graphics pipeline state
-    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+    vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, rz_pipeline);
 
-    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_layout, 0, 1, &submission.descriptor_set, 0, NULL);
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_GRAPHICS, rz_pipeline_layout, 0, 1, &submission.rz_descriptor_set, 0, NULL);
 
     // 9. Set viewport and scissor parameters
     VkViewport viewport {
