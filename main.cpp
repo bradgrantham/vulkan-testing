@@ -238,33 +238,38 @@ struct Buffer
     }
 };
 
-struct UniformBuffer
+struct Descriptor 
 {
     uint32_t binding;
     VkShaderStageFlags stageFlags;
+    VkDescriptorType type;
     size_t size;
-
-    UniformBuffer(int binding, VkShaderStageFlags stageFlags, size_t size) :
+    Descriptor(int binding, VkShaderStageFlags stageFlags, VkDescriptorType type) :
         binding(binding),
         stageFlags(stageFlags),
-        size(size)
-    {}
-};
-
-struct ImageSampler
-{
-    uint32_t binding;
-    VkShaderStageFlags stageFlags;
-    ImageSampler(int binding, VkShaderStageFlags stageFlags) :
+        type(type),
+        size(0)
+    {
+    }
+    Descriptor(int binding, VkShaderStageFlags stageFlags, VkDescriptorType type, size_t size) :
         binding(binding),
-        stageFlags(stageFlags)
-    {}
+        stageFlags(stageFlags),
+        type(type),
+        size(size)
+    {
+    }
 };
 
 struct ShadingUniforms
 {
     vec3 specular_color;
     float shininess;
+};
+
+struct RayTracingCamera
+{
+    mat4f modelviewInverse;
+    mat4f projectionInverse;
 };
 
 struct VertexUniforms
@@ -319,7 +324,7 @@ VkInstance CreateInstance(bool enable_validation)
             .sType = VK_STRUCTURE_TYPE_APPLICATION_INFO,
             .pApplicationName = "vulkan-test-grantham",
             .pEngineName = "vulkan-test-grantham",
-            .apiVersion = VK_API_VERSION_1_2,
+            .apiVersion = VK_API_VERSION_1_3,
         };
 
 	VkInstanceCreateInfo create {
@@ -950,6 +955,13 @@ std::vector<VkImage> GetSwapchainImages(VkDevice device, VkSwapchainKHR swapchai
     return swapchain_images;
 }
 
+struct StorageImage
+{
+    VkImageLayout layout;
+    VkImageView image_view;
+    VkImage image;
+};
+
 
 namespace VulkanApp
 {
@@ -976,7 +988,10 @@ struct Submission {
     VkSemaphore draw_completed_semaphore { VK_NULL_HANDLE };
     VkDescriptorSet rz_descriptor_set { VK_NULL_HANDLE };
     VkDescriptorSet rt_descriptor_set { VK_NULL_HANDLE };
-    Buffer uniform_buffers[3];
+    std::vector<Buffer> rz_uniform_buffers;
+    std::vector<Buffer> rt_uniform_buffers;
+    StorageImage rt_storage_image;
+    VkAccelerationStructureKHR rt_acceleration_structure;
 };
 static constexpr int SUBMISSIONS_IN_FLIGHT = 2;
 std::vector<Submission> submissions(SUBMISSIONS_IN_FLIGHT);
@@ -1002,8 +1017,7 @@ VkImageView depth_image_view = VK_NULL_HANDLE;
 uint32_t swapchain_width, swapchain_height;
 
 // rasterizer rendering stuff - pipelines, binding & drawing commands
-std::vector<UniformBuffer> rz_uniforms;
-std::vector<ImageSampler> rz_samplers;
+std::vector<Descriptor> rz_descriptors;
 VkPipelineLayout rz_pipeline_layout = VK_NULL_HANDLE;
 VkDescriptorPool rz_descriptor_pool = VK_NULL_HANDLE;
 VkRenderPass render_pass = VK_NULL_HANDLE;
@@ -1014,8 +1028,7 @@ VkDescriptorSetLayout rz_descriptor_set_layout = VK_NULL_HANDLE;
 PFN_vkCmdTraceRaysKHR CmdTraceRaysKHR;
 PFN_vkCreateRayTracingPipelinesKHR CreateRayTracingPipelinesKHR;
 VkPhysicalDeviceRayTracingPipelinePropertiesKHR  rt_pipeline_properties;
-std::vector<UniformBuffer> rt_uniforms;
-std::vector<ImageSampler> rt_samplers;
+std::vector<Descriptor> rt_descriptors;
 VkDescriptorPool rt_descriptor_pool = VK_NULL_HANDLE;
 VkDescriptorSetLayout rt_descriptor_set_layout = VK_NULL_HANDLE;
 VkPipelineLayout rt_pipeline_layout = VK_NULL_HANDLE;
@@ -1131,50 +1144,32 @@ void CreateSwapchainData(/*VkPhysicalDevice physical_device, VkDevice device, Vk
     }
 }
 
-void CreateRasterizationPipeline()
+void CreatePipelineDescriptorInfo(const std::vector<Descriptor>& descriptors, VkDescriptorPool& descriptor_pool, VkDescriptorSetLayout& descriptor_set_layout, VkPipelineLayout& pipeline_layout)
 {
-    // XXX Should probe these from shader code somehow
-    // XXX at the moment this order is assumed for "struct submission"
-    // rz_uniforms Buffer structs, see *_uniforms setting code in DrawFrame
-    rz_uniforms.push_back({0, VK_SHADER_STAGE_VERTEX_BIT, sizeof(VertexUniforms)});
-    rz_uniforms.push_back({1, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(FragmentUniforms)});
-    rz_uniforms.push_back({2, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(ShadingUniforms)});
-    rz_samplers.push_back({3, VK_SHADER_STAGE_FRAGMENT_BIT});
-
     std::vector<VkDescriptorSetLayoutBinding> layout_bindings;
-    for(const auto& uniform: rz_uniforms) {
+    std::vector<VkDescriptorPoolSize> pool_sizes;
+
+    for(const auto& descriptor: descriptors) {
         VkDescriptorSetLayoutBinding binding {
-            .binding = uniform.binding,
-            .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
+            .binding = descriptor.binding,
+            .descriptorType = descriptor.type,
             .descriptorCount = 1,
-            .stageFlags = uniform.stageFlags,
+            .stageFlags = descriptor.stageFlags,
             .pImmutableSamplers = nullptr,
         };
         layout_bindings.push_back(binding);
-    }
-    for(const auto& sampler: rz_samplers) {
-        VkDescriptorSetLayoutBinding binding {
-            .binding = sampler.binding,
-            .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-            .descriptorCount = 1,
-            .stageFlags = sampler.stageFlags,
-            .pImmutableSamplers = nullptr,
-        };
-        layout_bindings.push_back(binding);
+
+        pool_sizes.push_back({ descriptor.type, SUBMISSIONS_IN_FLIGHT });
     }
 
-    VkDescriptorPoolSize pool_sizes[] {
-        { VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, static_cast<uint32_t>(rz_uniforms.size()) * SUBMISSIONS_IN_FLIGHT },
-        { VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, static_cast<uint32_t>(rz_samplers.size()) * SUBMISSIONS_IN_FLIGHT },
-    };
     VkDescriptorPoolCreateInfo create_descriptor_pool {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
         .flags = 0,
         .maxSets = SUBMISSIONS_IN_FLIGHT,
-        .poolSizeCount = static_cast<uint32_t>(std::size(pool_sizes)),
-        .pPoolSizes = pool_sizes,
+        .poolSizeCount = static_cast<uint32_t>(pool_sizes.size()),
+        .pPoolSizes = pool_sizes.data(),
     };
-    VK_CHECK(vkCreateDescriptorPool(device, &create_descriptor_pool, nullptr, &rz_descriptor_pool));
+    VK_CHECK(vkCreateDescriptorPool(device, &create_descriptor_pool, nullptr, &descriptor_pool));
 
     VkDescriptorSetLayoutCreateInfo descriptor_set_layout_create {
         .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
@@ -1182,7 +1177,27 @@ void CreateRasterizationPipeline()
         .bindingCount = static_cast<uint32_t>(layout_bindings.size()),
         .pBindings = layout_bindings.data(),
     };
-    VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptor_set_layout_create, nullptr, &rz_descriptor_set_layout));
+    VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptor_set_layout_create, nullptr, &descriptor_set_layout));
+
+    VkPipelineLayoutCreateInfo create_layout {
+        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+        .setLayoutCount = 1,
+        .pSetLayouts = &descriptor_set_layout,
+    };
+    VK_CHECK(vkCreatePipelineLayout(device, &create_layout, nullptr, &pipeline_layout));
+}
+
+void CreateRasterizationPipeline()
+{
+    // XXX Should probe these from shader code somehow
+    // XXX at the moment this order is assumed for "struct submission"
+    // rz_descriptors Buffer structs, see *_uniforms setting code in DrawFrame
+    rz_descriptors.push_back({0, VK_SHADER_STAGE_VERTEX_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, sizeof(VertexUniforms)});
+    rz_descriptors.push_back({1, VK_SHADER_STAGE_FRAGMENT_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, sizeof(FragmentUniforms)});
+    rz_descriptors.push_back({2, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, sizeof(ShadingUniforms)});
+    rz_descriptors.push_back({3, VK_SHADER_STAGE_FRAGMENT_BIT, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER});
+
+    CreatePipelineDescriptorInfo(rz_descriptors, rz_descriptor_pool, rz_descriptor_set_layout, rz_pipeline_layout);
 
     drawable->CreateDeviceData(physical_device, device, queue);
 
@@ -1346,13 +1361,6 @@ void CreateRasterizationPipeline()
         .pDynamicStates = dynamicStateEnables,
     };
 
-    VkPipelineLayoutCreateInfo create_layout {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 1,
-        .pSetLayouts = &rz_descriptor_set_layout,
-    };
-    VK_CHECK(vkCreatePipelineLayout(device, &create_layout, nullptr, &rz_pipeline_layout));
-
 
     std::vector<std::pair<std::string, VkShaderStageFlagBits>> shader_binaries {
         {"testing.vert", VK_SHADER_STAGE_VERTEX_BIT},
@@ -1395,55 +1403,18 @@ void CreateRasterizationPipeline()
 void CreateRayTracingPipeline()
 {
     // XXX Should probe these from shader code somehow
+
+    rt_descriptors.push_back({0, VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR});
+    rt_descriptors.push_back({1, VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE});
+    // rt_descriptors.push_back({2, VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER});
+
     // XXX at the moment this order is assumed for "struct submission"
     // rt_uniforms Buffer structs, see *_uniforms setting code in DrawFrame
-    rt_samplers.push_back({0, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR});
-    // rt_uniforms.push_back({0, VK_SHADER_STAGE_VERTEX_BIT, sizeof(VertexUniforms)});
-    // rt_uniforms.push_back({1, VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(FragmentUniforms)});
-    // rt_uniforms.push_back({2, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, sizeof(ShadingUniforms)});
+    rt_descriptors.push_back({2, VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, sizeof(RayTracingCamera)});
+    // rt_uniforms.push_back({1, VK_SHADER_STAGE_FRAGMENT_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, sizeof(FragmentUniforms)});
+    // rt_uniforms.push_back({2, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, sizeof(ShadingUniforms)});
 
-    std::vector<VkDescriptorSetLayoutBinding> layout_bindings;
-    if(!rt_uniforms.empty()) {
-        for(const auto& uniform: rt_uniforms) {
-            VkDescriptorSetLayoutBinding binding {
-                .binding = uniform.binding,
-                .descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-                .descriptorCount = 1,
-                .stageFlags = uniform.stageFlags,
-                .pImmutableSamplers = nullptr,
-            };
-            layout_bindings.push_back(binding);
-        }
-    }
-    if(!rt_samplers.empty()) {
-        for(const auto& sampler: rt_samplers) {
-            VkDescriptorSetLayoutBinding binding {
-                .binding = sampler.binding,
-                .descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-                .descriptorCount = 1,
-                .stageFlags = sampler.stageFlags,
-                .pImmutableSamplers = nullptr,
-            };
-            layout_bindings.push_back(binding);
-        }
-    }
-
-    VkDescriptorSetLayoutCreateInfo descriptor_set_layout_create {
-        .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
-        .flags = 0,
-        .bindingCount = static_cast<uint32_t>(layout_bindings.size()),
-        .pBindings = layout_bindings.data(),
-    };
-    VK_CHECK(vkCreateDescriptorSetLayout(device, &descriptor_set_layout_create, nullptr, &rt_descriptor_set_layout));
-
-    VkPipelineLayoutCreateInfo create_pipeline_layout {
-        .sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
-        .setLayoutCount = 1,
-        .pSetLayouts = &rt_descriptor_set_layout,
-    };
-
-    VK_CHECK(vkCreatePipelineLayout(device, &create_pipeline_layout, nullptr, &rt_pipeline_layout));
-    assert(rt_pipeline_layout != VK_NULL_HANDLE);
+    CreatePipelineDescriptorInfo(rt_descriptors, rt_descriptor_pool, rt_descriptor_set_layout, rt_pipeline_layout);
 
     std::vector<std::tuple<std::string, VkShaderStageFlagBits, VkRayTracingShaderGroupTypeKHR>> rt_shader_binaries {
         {"testrt.rgen", VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_RAY_TRACING_SHADER_GROUP_TYPE_GENERAL_KHR},
@@ -1498,121 +1469,79 @@ void CreateRayTracingPipeline()
     VK_CHECK(CreateRayTracingPipelinesKHR(device, VK_NULL_HANDLE, VK_NULL_HANDLE, 1, &create_pipeline, nullptr, &rt_pipeline));
 }
 
-void CreateRasterizationPerSubmissionData(Submission& submission)
+void CreatePerSubmissionDescriptors(VkDescriptorPool descriptor_pool, VkDescriptorSetLayout descriptor_set_layout, VkDescriptorSet& descriptor_set, const std::vector<Descriptor>& descriptors, std::vector<Buffer>& uniform_buffers, const StorageImage& storage_image, VkAccelerationStructureKHR acceleration_structure)
 {
     VkDescriptorSetAllocateInfo allocate_descriptor_set {
 	.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-	    .descriptorPool = rz_descriptor_pool,
+	    .descriptorPool = descriptor_pool,
 	    .descriptorSetCount = 1,
-	    .pSetLayouts = &rz_descriptor_set_layout,
+	    .pSetLayouts = &descriptor_set_layout,
     };
-    VK_CHECK(vkAllocateDescriptorSets(device, &allocate_descriptor_set, &submission.rz_descriptor_set));
+    VK_CHECK(vkAllocateDescriptorSets(device, &allocate_descriptor_set, &descriptor_set));
 
-    int which = 0;
-    for(const auto& uniform: rz_uniforms) {
-	auto &uniform_buffer = submission.uniform_buffers[which];
+    for(const auto& descriptor: descriptors) {
+        VkWriteDescriptorSet write {
+            .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
+            .pNext = nullptr,
+            .dstSet = descriptor_set,
+            .dstBinding = descriptor.binding,
+            .dstArrayElement = 0,
+            .descriptorCount = 1,
+            .descriptorType = descriptor.type,
+        };
 
-	uniform_buffer.Create(physical_device, device, uniform.size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-	VK_CHECK(vkMapMemory(device, uniform_buffer.mem, 0, uniform.size, 0, &uniform_buffer.mapped));
+        if(descriptor.type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
+            Buffer uniform_buffer;
 
-	VkDescriptorBufferInfo buffer_info { uniform_buffer.buf, 0, uniform.size };
-	VkWriteDescriptorSet write_descriptor_set {
-	    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-		.dstSet = submission.rz_descriptor_set,
-		.dstBinding = uniform.binding,
-		.dstArrayElement = 0,
-		.descriptorCount = 1,
-		.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-		.pImageInfo = nullptr,
-		.pBufferInfo = &buffer_info,
-		.pTexelBufferView = nullptr,
-	};
-	vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, nullptr);
+            uniform_buffer.Create(physical_device, device, descriptor.size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+            VK_CHECK(vkMapMemory(device, uniform_buffer.mem, 0, descriptor.size, 0, &uniform_buffer.mapped));
+            uniform_buffers.push_back(uniform_buffer);
 
-	which++;
-    }
+            VkDescriptorBufferInfo buffer_info { uniform_buffer.buf, 0, descriptor.size };
 
-    if(rz_samplers.size() != 1) {
-	// XXX only one texture and one drawable at the moment
-	throw std::runtime_error("More than one sampler is not yet supported");
-    }
-    for(const auto& sampler: rz_samplers) {
-	VkDescriptorImageInfo image_info {
-	    .sampler = drawable->textureSampler,
-		.imageView = drawable->textureImageView,
-		.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-	};
-	VkWriteDescriptorSet write_descriptor_set {
-	    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-		.dstSet = submission.rz_descriptor_set,
-		.dstBinding = sampler.binding,
-		.dstArrayElement = 0,
-		.descriptorCount = 1,
-		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-		.pImageInfo = &image_info,
-		.pBufferInfo = nullptr,
-		.pTexelBufferView = nullptr,
-	};
-	vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, nullptr);
-    }
-}
+            write.pBufferInfo = &buffer_info;
+            vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
 
-void CreateRayTracingPerSubmissionData(Submission& submission)
-{
-    VkDescriptorSetAllocateInfo allocate_descriptor_set {
-	.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
-	    .descriptorPool = rt_descriptor_pool,
-	    .descriptorSetCount = 1,
-	    .pSetLayouts = &rt_descriptor_set_layout,
-    };
-    VK_CHECK(vkAllocateDescriptorSets(device, &allocate_descriptor_set, &submission.rt_descriptor_set));
+        } else if(descriptor.type == VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER) {
 
-    int which = 0;
-    for(const auto& uniform: rt_uniforms) {
-	auto &uniform_buffer = submission.uniform_buffers[which];
+            // XXX!!! assumes that there is only one texture, the drawble->textureSampler!
+            // rewrite this so that there's a generalized "Descriptor" thingie also containing values
 
-	uniform_buffer.Create(physical_device, device, uniform.size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-	VK_CHECK(vkMapMemory(device, uniform_buffer.mem, 0, uniform.size, 0, &uniform_buffer.mapped));
+            VkDescriptorImageInfo image_info {
+                .sampler = drawable->textureSampler, // XXX AHHHH
+                .imageView = drawable->textureImageView, // XXX AHHHH
+                .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            };
 
-	VkDescriptorBufferInfo buffer_info { uniform_buffer.buf, 0, uniform.size };
-	VkWriteDescriptorSet write_descriptor_set {
-	    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-		.dstSet = submission.rt_descriptor_set,
-		.dstBinding = uniform.binding,
-		.dstArrayElement = 0,
-		.descriptorCount = 1,
-		.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-		.pImageInfo = nullptr,
-		.pBufferInfo = &buffer_info,
-		.pTexelBufferView = nullptr,
-	};
-	vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, nullptr);
+            write.pImageInfo = &image_info;
+            vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
 
-	which++;
-    }
+        } else if(descriptor.type == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE) {
 
-    if(rt_samplers.size() != 1) {
-	// XXX only one texture and one drawable at the moment
-	throw std::runtime_error("More than one sampler is not yet supported");
-    }
-    for(const auto& sampler: rt_samplers) {
-	VkDescriptorImageInfo image_info {
-	    .sampler = drawable->textureSampler,
-		.imageView = drawable->textureImageView,
-		.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
-	};
-	VkWriteDescriptorSet write_descriptor_set {
-	    .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET,
-		.dstSet = submission.rt_descriptor_set,
-		.dstBinding = sampler.binding,
-		.dstArrayElement = 0,
-		.descriptorCount = 1,
-		.descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-		.pImageInfo = &image_info,
-		.pBufferInfo = nullptr,
-		.pTexelBufferView = nullptr,
-	};
-	vkUpdateDescriptorSets(device, 1, &write_descriptor_set, 0, nullptr);
+            // XXX!!! assumes that there is only one storageImage
+            // rewrite this so that there's a generalized "Descriptor" thingie also containing values
+            VkDescriptorImageInfo image_info {
+                .imageView = storage_image.image_view, // XXX AHHHH
+                .imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL,
+            };
+
+            write.pImageInfo = &image_info;
+            vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+
+        } else if(descriptor.type == VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR) {
+
+            // XXX!!! assumes that there is only one AS
+            // rewrite this so that there's a generalized "Descriptor" thingie also containing values
+            VkWriteDescriptorSetAccelerationStructureKHR write_as {
+                .sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET_ACCELERATION_STRUCTURE_KHR,
+                .pNext = nullptr,
+                .accelerationStructureCount = 1,
+                .pAccelerationStructures = &acceleration_structure,
+            };
+            write.pNext = &write_as;
+
+            vkUpdateDescriptorSets(device, 1, &write, 0, nullptr);
+        }
     }
 }
 
@@ -1643,9 +1572,9 @@ void CreatePerSubmissionData()
         };
         VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &submission.draw_completed_semaphore));
 
-	CreateRasterizationPerSubmissionData(submission);
+        CreatePerSubmissionDescriptors(rz_descriptor_pool, rz_descriptor_set_layout, submission.rz_descriptor_set, rz_descriptors, submission.rz_uniform_buffers, {}, VK_NULL_HANDLE);
 
-	CreateRayTracingPerSubmissionData(submission);
+        CreatePerSubmissionDescriptors(rt_descriptor_pool, rt_descriptor_set_layout, submission.rt_descriptor_set, rt_descriptors, submission.rt_uniform_buffers, submission.rt_storage_image, submission.rt_acceleration_structure);
     }
 }
 
@@ -1763,9 +1692,29 @@ T align(T value, T align)
 
 void DrawFrameRT([[maybe_unused]] GLFWwindow *window)
 {
+    auto& submission = submissions[submission_index];
+
+    if(submission.draw_completed_fence_submitted) {
+        VK_CHECK(vkWaitForFences(device, 1, &submission.draw_completed_fence, VK_TRUE, DEFAULT_FENCE_TIMEOUT));
+        VK_CHECK(vkResetFences(device, 1, &submission.draw_completed_fence));
+        submission.draw_completed_fence_submitted = false;
+    }
+
     frame += 1;
 
-    auto& submission = submissions[submission_index];
+    mat4f modelview = inverse(object_manip.m_matrix);
+
+    float nearClip = .1f; // XXX - gSceneManip->m_translation[2] - gSceneManip->m_reference_size;
+    float farClip = 1000.0; // XXX - gSceneManip->m_translation[2] + gSceneManip->m_reference_size;
+    float frustumTop = tan(fov / 180.0f * 3.14159f / 2) * nearClip;
+    float frustumBottom = -frustumTop;
+    float frustumRight = frustumTop * swapchain_width / swapchain_height;
+    float frustumLeft = -frustumRight;
+    mat4f projection = inverse(mat4f::frustum(frustumLeft, frustumRight, frustumTop, frustumBottom, nearClip, farClip));
+
+    RayTracingCamera* rtcamera_uniforms = static_cast<RayTracingCamera*>(submission.rt_uniform_buffers[0].mapped);
+    rtcamera_uniforms->modelviewInverse = modelview;
+    rtcamera_uniforms->projectionInverse = projection.m_v;
 
     auto cb = submission.command_buffer;
 
@@ -1801,6 +1750,8 @@ void DrawFrameRT([[maybe_unused]] GLFWwindow *window)
     };
 
     vkCmdBindPipeline(cb, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rt_pipeline);
+
+    vkCmdBindDescriptorSets(cb, VK_PIPELINE_BIND_POINT_RAY_TRACING_KHR, rt_pipeline_layout, 0, 1, &submission.rt_descriptor_set, 0, NULL);
 
     VulkanApp::CmdTraceRaysKHR(
         cb,
@@ -1854,7 +1805,7 @@ void DrawFrame([[maybe_unused]] GLFWwindow *window)
     float frustumLeft = -frustumRight;
     mat4f projection = mat4f::frustum(frustumLeft, frustumRight, frustumTop, frustumBottom, nearClip, farClip);
 
-    VertexUniforms* vertex_uniforms = static_cast<VertexUniforms*>(submission.uniform_buffers[0].mapped);
+    VertexUniforms* vertex_uniforms = static_cast<VertexUniforms*>(submission.rz_uniform_buffers[0].mapped);
     vertex_uniforms->modelview = modelview;
     vertex_uniforms->modelview_normal = modelview_normal;
     vertex_uniforms->projection = projection.m_v;
@@ -1864,13 +1815,13 @@ void DrawFrame([[maybe_unused]] GLFWwindow *window)
 
     light_position = light_position * light_manip.m_matrix;
 
-    FragmentUniforms* fragment_uniforms = static_cast<FragmentUniforms*>(submission.uniform_buffers[1].mapped);
+    FragmentUniforms* fragment_uniforms = static_cast<FragmentUniforms*>(submission.rz_uniform_buffers[1].mapped);
     fragment_uniforms->light_position[0] = light_position[0];
     fragment_uniforms->light_position[1] = light_position[1];
     fragment_uniforms->light_position[2] = light_position[2];
     fragment_uniforms->light_color = light_color;
 
-    ShadingUniforms* shading_uniforms = static_cast<ShadingUniforms*>(submission.uniform_buffers[2].mapped);
+    ShadingUniforms* shading_uniforms = static_cast<ShadingUniforms*>(submission.rz_uniform_buffers[2].mapped);
     shading_uniforms->specular_color.set(drawable->specular_color); // XXX drops specular_color[3]
     shading_uniforms->shininess = drawable->shininess;
 

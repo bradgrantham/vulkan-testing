@@ -1,6 +1,8 @@
 #version 460
+#extension GL_EXT_ray_tracing : enable
+#extension GL_EXT_nonuniform_qualifier : enable
 
-layout (binding = 0) uniform sampler2D color_texture;
+// layout (binding = 2) uniform sampler2D color_texture;
 
 // ?? layout (location = 0) out vec4 outFragColor;
 
@@ -24,7 +26,8 @@ void main()
 
     vec3 ldir = normalize(light_position - vertex_position.xyz);
     vec3 refl = reflect(-ldir, normal);
-    vec3 diffuse = max(0, dot(normal, ldir)) * light_color * texture(color_texture, vertex_texcoord).xyz;
+    // vec3 diffuse = max(0, dot(normal, ldir)) * light_color * texture(color_texture, vertex_texcoord).xyz;
+    vec3 diffuse = max(0, dot(normal, ldir)) * light_color;
     vec3 ambient = vec3(1, 1, 1); // ubo2.light_color;
     vec3 specular = pow(max(0, dot(refl, edir)), shininess) * specular_color * light_color;
     vec3 material_diffuse = vec3(.8, .8, .8);

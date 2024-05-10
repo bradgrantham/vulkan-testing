@@ -1,4 +1,4 @@
 for name in testing.vert testing.frag testrt.rgen testrt.rmiss testrt.rchit
 do
-    glslangValidator -V -e main -o $name $name.glsl
+    glslangValidator -V --target-env vulkan1.3 -e main -o $name $name.glsl
 done
