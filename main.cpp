@@ -1838,8 +1838,21 @@ void InitializeState(uint32_t specified_gpu)
     blas_geometry_info.dstAccelerationStructure = rt_blas;
     blas_geometry_info.scratchData.deviceAddress = blas_scratch.GetDeviceAddress(VulkanApp::GetBufferDeviceAddressKHR);
     VulkanApp::CmdBuildAccelerationStructuresKHR(build_commands, 1, &blas_geometry_info, blas_ranges.data());
-    VK_CHECK(vkEndCommandBuffer(build_commands));
-    FlushCommandBuffer(device, queue, build_commands);
+
+    // memory barrier on BLAS buffer
+    VkBufferMemoryBarrier blas_buffer_barrier {
+        .sType = VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER,
+        .pNext = nullptr,
+        .srcAccessMask = VK_ACCESS_MEMORY_WRITE_BIT,
+        .dstAccessMask = VK_ACCESS_MEMORY_READ_BIT,
+        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+        .buffer = rt_blas_buffer.buf,
+        .offset = 0,
+        .size = blas_sizes.accelerationStructureSize,
+    };
+
+    vkCmdPipelineBarrier(build_commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 1, &blas_buffer_barrier, 0, nullptr);
 
     // top-level acceleration structure (TLAS)
 
@@ -1922,7 +1935,6 @@ void InitializeState(uint32_t specified_gpu)
     };
     std::vector<VkAccelerationStructureBuildRangeInfoKHR*> tlas_ranges = { &tlas_range };
 
-    BeginCommandBuffer(build_commands);
     tlas_geometry_info.dstAccelerationStructure = rt_tlas;
     tlas_geometry_info.scratchData.deviceAddress = tlas_scratch.GetDeviceAddress(VulkanApp::GetBufferDeviceAddressKHR);
     VulkanApp::CmdBuildAccelerationStructuresKHR(build_commands, 1, &tlas_geometry_info, tlas_ranges.data());
