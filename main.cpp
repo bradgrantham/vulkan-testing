@@ -166,10 +166,10 @@ static constexpr uint32_t NO_QUEUE_FAMILY = 0xffffffff;
 
 struct Vertex
 {
-    vec3 v;
-    vec3 n;
+    vec4 v; // component 3 ignored
+    vec4 n; // component 3 ignored
     vec4 c;
-    vec3 t;
+    vec4 t; // component 3 ignored
 
     Vertex(const vec3& v, const vec3& n, const vec4& c, const vec2& t) :
         v(v),
@@ -654,8 +654,8 @@ void CreateGeometryBuffers(VkPhysicalDevice physical_device, VkDevice device, Vk
     memcpy(index_staging.mapped, indices.data(), ByteCount(indices));
     vkUnmapMemory(device, index_staging.mem);
 
-    vertex_buffer->Create(physical_device, device, ByteCount(vertices), VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT); // VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    index_buffer->Create(physical_device, device, ByteCount(indices), VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT); // VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    vertex_buffer->Create(physical_device, device, ByteCount(vertices), VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT); // VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    index_buffer->Create(physical_device, device, ByteCount(indices), VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_INDEX_BUFFER_BIT | VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT | VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT); // VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
 
     VkCommandPool command_pool = CreateCommandPool(device, transfer_queue);
     VkCommandBuffer transfer_commands = AllocateCommandBuffer(device, command_pool);
@@ -823,7 +823,7 @@ struct DrawableShape
         this->specular_color[3] = specular_color[3];
         triangleCount = static_cast<int>(indices.size() / 3);
         for(uint32_t i = 0; i < vertices.size(); i++) {
-            bounds += vertices[i].v;
+            bounds += vec3(vertices[i].v[0], vertices[i].v[1], vertices[i].v[2]);
         }
     }
 
@@ -992,7 +992,7 @@ VkWriteDescriptorSet FillWriteDescriptorSet(VkDescriptorSet& descriptor_set, con
 void UpdateDescriptor(VkDevice device, VkDescriptorSet& descriptor_set, const Descriptor& descriptor, const Buffer& buffer)
 {
     auto write_descriptor = FillWriteDescriptorSet(descriptor_set, descriptor);
-    VkDescriptorBufferInfo buffer_info{ .buffer = buffer.buf, .offset = 0, .range = VK_WHOLE_SIZE };
+    VkDescriptorBufferInfo buffer_info{ .buffer = buffer.buf, .offset = 0, .range = descriptor.size, };
     write_descriptor.pBufferInfo = &buffer_info;
     vkUpdateDescriptorSets(device, 1, &write_descriptor, 0, nullptr);
 }
@@ -1453,7 +1453,6 @@ void CreateRasterizationPipeline()
         .pDynamicStates = dynamicStateEnables,
     };
 
-
     std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
 
     for(const auto& [name, stage]: rz_shader_binaries) {
@@ -1493,13 +1492,12 @@ void CreateRayTracingPipeline()
 
     rt_descriptors.insert({"tlas", {0, VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_DESCRIPTOR_TYPE_ACCELERATION_STRUCTURE_KHR}});
     rt_descriptors.insert({"storage_image", {1, VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_DESCRIPTOR_TYPE_STORAGE_IMAGE}});
-    // rt_descriptors.insert({"diffuse_texture", {2, VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER}});
-
-    // XXX at the moment this order is assumed for "struct submission"
-    // rt_uniforms Buffer structs, see *_uniforms setting code in DrawFrame
     rt_descriptors.insert({"camera", {2, VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, sizeof(RayTracingCamera)}});
-    // rt_uniforms.insert({"fragment_uniforms", {1, VK_SHADER_STAGE_FRAGMENT_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, sizeof(FragmentUniforms)}});
-    // rt_uniforms.insert({"shading_uniforms", {2, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, sizeof(ShadingUniforms)}});
+    rt_descriptors.insert({"vertex_buffer", {3, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_WHOLE_SIZE}});
+    rt_descriptors.insert({"index_buffer", {4, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_WHOLE_SIZE}});
+    // rt_descriptors.insert({"fragment_uniforms", {5, VK_SHADER_STAGE_FRAGMENT_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, sizeof(FragmentUniforms)}});
+    // rt_descriptors.insert({"shading_uniforms", {6, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, sizeof(ShadingUniforms)}});
+    // rt_descriptors.insert({"diffuse_texture", {7, VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER}});
 
     CreatePipelineDescriptorInfo(rt_descriptors, rt_descriptor_pool, rt_descriptor_set_layout, rt_pipeline_layout);
 
@@ -1654,6 +1652,8 @@ void CreatePerSubmissionData()
                 UpdateDescriptor(device, submission.rt_descriptor_set, descriptor, submission.rt_uniform_buffers.at(name));
             }
         }
+        UpdateDescriptor(device, submission.rt_descriptor_set, rt_descriptors.at("vertex_buffer"), drawable->buffers_by_device[device][DrawableShape::VERTEX_BUFFER]);
+        UpdateDescriptor(device, submission.rt_descriptor_set, rt_descriptors.at("index_buffer"), drawable->buffers_by_device[device][DrawableShape::INDEX_BUFFER]);
 
         submission.rt_storage_image.Create(physical_device, device, queue, graphics_queue_family, 512, 512, chosen_color_format);
         UpdateDescriptor(device, submission.rt_descriptor_set, rt_descriptors.at("tlas"), rt_tlas);
