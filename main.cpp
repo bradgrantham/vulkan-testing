@@ -1099,6 +1099,10 @@ VkDescriptorPool rz_descriptor_pool = VK_NULL_HANDLE;
 VkRenderPass render_pass = VK_NULL_HANDLE;
 VkPipeline rz_pipeline = VK_NULL_HANDLE;
 VkDescriptorSetLayout rz_descriptor_set_layout = VK_NULL_HANDLE;
+std::vector<std::pair<std::string, VkShaderStageFlagBits>> rz_shader_binaries {
+    {"testing.vert", VK_SHADER_STAGE_VERTEX_BIT},
+    {"testing.frag", VK_SHADER_STAGE_FRAGMENT_BIT}
+};
 
 // ray-tracer rendering stuff - pipelines, binding & drawing commands
 PFN_vkCmdTraceRaysKHR CmdTraceRaysKHR;
@@ -1128,10 +1132,7 @@ int rt_raygen_group_index = -1;
 int rt_miss_group_index = -1;
 int rt_hit_group_index = -1;
 
-
-
 // interaction data
-
 
 manipulator object_manip;
 manipulator light_manip;
@@ -1453,14 +1454,9 @@ void CreateRasterizationPipeline()
     };
 
 
-    std::vector<std::pair<std::string, VkShaderStageFlagBits>> shader_binaries {
-        {"testing.vert", VK_SHADER_STAGE_VERTEX_BIT},
-        {"testing.frag", VK_SHADER_STAGE_FRAGMENT_BIT}
-    };
-    
     std::vector<VkPipelineShaderStageCreateInfo> shader_stages;
 
-    for(const auto& [name, stage]: shader_binaries) {
+    for(const auto& [name, stage]: rz_shader_binaries) {
         std::vector<uint32_t> shader_code = GetFileAsCode(name);
         VkShaderModule shader_module = CreateShaderModule(device, shader_code);
         VkPipelineShaderStageCreateInfo shader_create {
@@ -1870,7 +1866,7 @@ void InitializeState(uint32_t specified_gpu)
         .size = blas_sizes.accelerationStructureSize,
     };
 
-    vkCmdPipelineBarrier(build_commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, 0, 0, nullptr, 1, &blas_buffer_barrier, 0, nullptr);
+    vkCmdPipelineBarrier(build_commands, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, VK_PIPELINE_STAGE_ACCELERATION_STRUCTURE_BUILD_BIT_KHR, 0, 0, nullptr, 1, &blas_buffer_barrier, 0, nullptr);
 
     // top-level acceleration structure (TLAS)
 
