@@ -1,6 +1,14 @@
 #version 460
 #extension GL_EXT_ray_tracing : enable
 
+struct surface_hit
+{
+    highp float t;
+    vec3 position;
+    vec3 color;
+    vec3 normal;
+};
+
 layout(binding = 0, set = 0) uniform accelerationStructureEXT TLAS;
 layout(binding = 1, set = 0, rgba8) uniform image2D image;
 
@@ -10,7 +18,7 @@ layout(binding = 2, set = 0) uniform Camera
     mat4 projInverse;
 } cam;
 
-layout(location = 0) rayPayloadEXT vec3 hitValue;
+layout(location = 0) rayPayloadEXT surface_hit hit_value;
 
 // Adapted from Sascha's rgen
 void main()
@@ -39,9 +47,21 @@ void main()
     float tmin = 0.001;
     float tmax = 10000.0;
 
-    hitValue = vec3(1, 0, 0); // vec3(0.0);
+    vec3 accumulated = vec3(1, 1, 1);
+
+    hit_value.t = tmax;
+    hit_value.color = vec3(1, 0, 0);
+    hit_value.normal = vec3(0, 0, 1);
 
     traceRayEXT(TLAS, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0, vec3(origin), tmin, vec3(direction), tmax, 0);
+    if(hit_value.t == tmax) {
+        accumulated = hit_value.color;
+    } else {
+        vec3 reflected = reflect(direction.xyz, hit_value.normal);
+        vec3 color = hit_value.color;
+        traceRayEXT(TLAS, gl_RayFlagsOpaqueEXT, 0xff, 0, 0, 0, vec3(hit_value.position), tmin, vec3(reflected), tmax, 0);
+        accumulated = color + hit_value.color;
+    }
 
-    imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(hitValue, 0.0));
+    imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(accumulated, 0.0));
 }
