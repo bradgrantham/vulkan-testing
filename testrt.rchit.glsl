@@ -42,8 +42,8 @@ void main()
 
     hitValue = result_color;
 #else
-    hitValue = vec3(0, 1, 0);
-    // hitValue = vec3(1.0f - attribs.x - attribs.y, attribs.x, attribs.y);
+    // hitValue = vec3(0, 1, 0);
+    hitValue = vec3(1.0f - attribs.x - attribs.y, attribs.x, attribs.y);
 #if 0
     uint shift = 31 - gl_LaunchIDEXT.x * 32 / gl_LaunchSizeEXT.x;
     uint num = (gl_LaunchIDEXT.y < 256) ? gl_PrimitiveID : 0xAAAA00FF;

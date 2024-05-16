@@ -1758,9 +1758,6 @@ void InitializeState(uint32_t specified_gpu)
 
     VkCommandBuffer build_commands = AllocateCommandBuffer(device, command_pool);
 
-    BeginCommandBuffer(build_commands);
-
-
     // bottom-level acceleration structure (BLAS)
 
     VkTransformMatrixKHR blas_transform {
@@ -1775,28 +1772,14 @@ void InitializeState(uint32_t specified_gpu)
     vkUnmapMemory(device, blas_transform_buffer.mem);
     blas_transform_buffer.mapped = nullptr;
 
-    Buffer rt_vertex_buffer;
-    rt_vertex_buffer.Create(physical_device, device, ByteCount(drawable->vertices), VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    VK_CHECK(vkMapMemory(device, rt_vertex_buffer.mem, 0, ByteCount(drawable->vertices), 0, &rt_vertex_buffer.mapped));
-    memcpy(rt_vertex_buffer.mapped, drawable->vertices.data(), ByteCount(drawable->vertices));
-    vkUnmapMemory(device, rt_vertex_buffer.mem);
-    rt_vertex_buffer.mapped = nullptr;
-
-    Buffer rt_index_buffer;
-    rt_index_buffer.Create(physical_device, device, ByteCount(drawable->indices), VK_BUFFER_USAGE_ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_BIT_KHR | VK_BUFFER_USAGE_SHADER_DEVICE_ADDRESS_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-    VK_CHECK(vkMapMemory(device, rt_index_buffer.mem, 0, ByteCount(drawable->indices), 0, &rt_index_buffer.mapped));
-    memcpy(rt_index_buffer.mapped, drawable->indices.data(), ByteCount(drawable->indices));
-    vkUnmapMemory(device, rt_index_buffer.mem);
-    rt_index_buffer.mapped = nullptr;
-
     VkAccelerationStructureGeometryTrianglesDataKHR triangles_data {
         .sType = VK_STRUCTURE_TYPE_ACCELERATION_STRUCTURE_GEOMETRY_TRIANGLES_DATA_KHR,
         .vertexFormat = VK_FORMAT_R32G32B32_SFLOAT,
-        .vertexData = rt_vertex_buffer.GetDeviceAddress(VulkanApp::GetBufferDeviceAddressKHR),
+        .vertexData = drawable->buffers_by_device[device][DrawableShape::VERTEX_BUFFER].GetDeviceAddress(VulkanApp::GetBufferDeviceAddressKHR),
         .vertexStride = sizeof(Vertex),
         .maxVertex = static_cast<uint32_t>(drawable->vertices.size() - 1),
         .indexType = VK_INDEX_TYPE_UINT32,
-        .indexData = rt_index_buffer.GetDeviceAddress(VulkanApp::GetBufferDeviceAddressKHR),
+        .indexData = drawable->buffers_by_device[device][DrawableShape::INDEX_BUFFER].GetDeviceAddress(VulkanApp::GetBufferDeviceAddressKHR),
         .transformData = blas_transform_buffer.GetDeviceAddress(VulkanApp::GetBufferDeviceAddressKHR),
     };
 
@@ -1851,9 +1834,12 @@ void InitializeState(uint32_t specified_gpu)
     };
     std::vector<VkAccelerationStructureBuildRangeInfoKHR*> blas_ranges = { &blas_range };
 
+    BeginCommandBuffer(build_commands);
     blas_geometry_info.dstAccelerationStructure = rt_blas;
     blas_geometry_info.scratchData.deviceAddress = blas_scratch.GetDeviceAddress(VulkanApp::GetBufferDeviceAddressKHR);
     VulkanApp::CmdBuildAccelerationStructuresKHR(build_commands, 1, &blas_geometry_info, blas_ranges.data());
+    VK_CHECK(vkEndCommandBuffer(build_commands));
+    FlushCommandBuffer(device, queue, build_commands);
 
     // top-level acceleration structure (TLAS)
 
@@ -1936,6 +1922,7 @@ void InitializeState(uint32_t specified_gpu)
     };
     std::vector<VkAccelerationStructureBuildRangeInfoKHR*> tlas_ranges = { &tlas_range };
 
+    BeginCommandBuffer(build_commands);
     tlas_geometry_info.dstAccelerationStructure = rt_tlas;
     tlas_geometry_info.scratchData.deviceAddress = tlas_scratch.GetDeviceAddress(VulkanApp::GetBufferDeviceAddressKHR);
     VulkanApp::CmdBuildAccelerationStructuresKHR(build_commands, 1, &tlas_geometry_info, tlas_ranges.data());
