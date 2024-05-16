@@ -9,7 +9,6 @@ hitAttributeEXT vec3 attribs;
 
 void main()
 {
-#if 0
     vec3 specular_color = vec3(1, 1, 1); // from material
     float shininess = 10; // from material
     vec3 light_position = vec3(1000, 1000, 1000); // get global light position
@@ -41,18 +40,5 @@ void main()
     vec3 result_color = vertex_color;
 
     hitValue = result_color;
-#else
-    // hitValue = vec3(0, 1, 0);
-    hitValue = vec3(1.0f - attribs.x - attribs.y, attribs.x, attribs.y);
-#if 0
-    uint shift = 31 - gl_LaunchIDEXT.x * 32 / gl_LaunchSizeEXT.x;
-    uint num = (gl_LaunchIDEXT.y < 256) ? gl_PrimitiveID : 0xAAAA00FF;
-    if((num & (1 << shift)) != 0) {
-        hitValue = vec3(1, 1, 1);
-    } else {
-        hitValue = vec3(0, 0, 0);
-    }
-#endif
-#endif
 }
 
