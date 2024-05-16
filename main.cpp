@@ -1059,8 +1059,8 @@ struct Submission {
     VkSemaphore draw_completed_semaphore { VK_NULL_HANDLE };
     VkDescriptorSet rz_descriptor_set { VK_NULL_HANDLE };
     VkDescriptorSet rt_descriptor_set { VK_NULL_HANDLE };
-    std::vector<Buffer> rz_uniform_buffers;
-    std::vector<Buffer> rt_uniform_buffers;
+    std::map<std::string, Buffer> rz_uniform_buffers;
+    std::map<std::string, Buffer> rt_uniform_buffers;
     StorageImage rt_storage_image;
 };
 static constexpr int SUBMISSIONS_IN_FLIGHT = 2;
@@ -1621,15 +1621,6 @@ void CreatePerSubmissionData()
         };
         VK_CHECK(vkCreateSemaphore(device, &sema_create, NULL, &submission.draw_completed_semaphore));
 
-        for(const auto& [name, descriptor] : rz_descriptors) {
-            if(descriptor.type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
-                Buffer uniform_buffer;
-                uniform_buffer.Create(physical_device, device, descriptor.size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
-                VK_CHECK(vkMapMemory(device, uniform_buffer.mem, 0, descriptor.size, 0, &uniform_buffer.mapped));
-                submission.rz_uniform_buffers.push_back(uniform_buffer);
-            }
-        }
-
         VkDescriptorSetAllocateInfo rz_allocate_descriptor_set {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 	    .descriptorPool = rz_descriptor_pool,
@@ -1638,20 +1629,17 @@ void CreatePerSubmissionData()
         };
         VK_CHECK(vkAllocateDescriptorSets(device, &rz_allocate_descriptor_set, &submission.rz_descriptor_set));
 
-        // XXX should have a way to bind which Descriptor to which index in uniform_buffers
-        UpdateDescriptor(device, submission.rz_descriptor_set, rz_descriptors.at("vertex_uniforms"), submission.rz_uniform_buffers[0]);
-        UpdateDescriptor(device, submission.rz_descriptor_set, rz_descriptors.at("fragment_uniforms"), submission.rz_uniform_buffers[1]);
-        UpdateDescriptor(device, submission.rz_descriptor_set, rz_descriptors.at("shading_uniforms"), submission.rz_uniform_buffers[2]);
-        UpdateDescriptor(device, submission.rz_descriptor_set, rz_descriptors.at("diffuse_texture"), drawable->textureSampler, drawable->textureImageView);
-
-        for(const auto& [name, descriptor] : rt_descriptors) {
+        for(const auto& [name, descriptor] : rz_descriptors) {
             if(descriptor.type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
                 Buffer uniform_buffer;
                 uniform_buffer.Create(physical_device, device, descriptor.size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
                 VK_CHECK(vkMapMemory(device, uniform_buffer.mem, 0, descriptor.size, 0, &uniform_buffer.mapped));
-                submission.rt_uniform_buffers.push_back(uniform_buffer);
+                submission.rz_uniform_buffers.insert({name, uniform_buffer});
+                UpdateDescriptor(device, submission.rz_descriptor_set, descriptor, submission.rz_uniform_buffers.at(name));
             }
         }
+
+        UpdateDescriptor(device, submission.rz_descriptor_set, rz_descriptors.at("diffuse_texture"), drawable->textureSampler, drawable->textureImageView);
 
         VkDescriptorSetAllocateInfo rt_allocate_descriptor_set {
             .sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
@@ -1661,10 +1649,19 @@ void CreatePerSubmissionData()
         };
         VK_CHECK(vkAllocateDescriptorSets(device, &rt_allocate_descriptor_set, &submission.rt_descriptor_set));
 
+        for(const auto& [name, descriptor] : rt_descriptors) {
+            if(descriptor.type == VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER) {
+                Buffer uniform_buffer;
+                uniform_buffer.Create(physical_device, device, descriptor.size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT);
+                VK_CHECK(vkMapMemory(device, uniform_buffer.mem, 0, descriptor.size, 0, &uniform_buffer.mapped));
+                submission.rt_uniform_buffers.insert({ name, uniform_buffer });
+                UpdateDescriptor(device, submission.rt_descriptor_set, descriptor, submission.rt_uniform_buffers.at(name));
+            }
+        }
+
         submission.rt_storage_image.Create(physical_device, device, queue, graphics_queue_family, 512, 512, chosen_color_format);
         UpdateDescriptor(device, submission.rt_descriptor_set, rt_descriptors.at("tlas"), rt_tlas);
         UpdateDescriptor(device, submission.rt_descriptor_set, rt_descriptors.at("storage_image"), submission.rt_storage_image);
-        UpdateDescriptor(device, submission.rt_descriptor_set, rt_descriptors.at("camera"), submission.rt_uniform_buffers[0]);
     }
 }
 
@@ -2000,7 +1997,8 @@ void DrawFrameRT([[maybe_unused]] GLFWwindow *window)
     float frustumLeft = -frustumRight;
     mat4f projection = inverse(mat4f::frustum(frustumLeft, frustumRight, frustumTop, frustumBottom, nearClip, farClip));
 
-    RayTracingCamera* rtcamera_uniforms = static_cast<RayTracingCamera*>(submission.rt_uniform_buffers[0].mapped);
+    // XXX probably should find a way to index "rt_uniform_buffers" not by a string
+    RayTracingCamera* rtcamera_uniforms = static_cast<RayTracingCamera*>(submission.rt_uniform_buffers.at("camera").mapped);
     rtcamera_uniforms->modelviewInverse = modelview;
     rtcamera_uniforms->projectionInverse = projection.m_v;
 
@@ -2159,7 +2157,8 @@ void DrawFrame([[maybe_unused]] GLFWwindow *window)
     float frustumLeft = -frustumRight;
     mat4f projection = mat4f::frustum(frustumLeft, frustumRight, frustumTop, frustumBottom, nearClip, farClip);
 
-    VertexUniforms* vertex_uniforms = static_cast<VertexUniforms*>(submission.rz_uniform_buffers[0].mapped);
+    // XXX probably should find a way to index "rz_uniform_buffers" not by a string
+    VertexUniforms* vertex_uniforms = static_cast<VertexUniforms*>(submission.rz_uniform_buffers.at("vertex_uniforms").mapped);
     vertex_uniforms->modelview = modelview;
     vertex_uniforms->modelview_normal = modelview_normal;
     vertex_uniforms->projection = projection.m_v;
@@ -2169,13 +2168,13 @@ void DrawFrame([[maybe_unused]] GLFWwindow *window)
 
     light_position = light_position * light_manip.m_matrix;
 
-    FragmentUniforms* fragment_uniforms = static_cast<FragmentUniforms*>(submission.rz_uniform_buffers[1].mapped);
+    FragmentUniforms* fragment_uniforms = static_cast<FragmentUniforms*>(submission.rz_uniform_buffers.at("fragment_uniforms").mapped);
     fragment_uniforms->light_position[0] = light_position[0];
     fragment_uniforms->light_position[1] = light_position[1];
     fragment_uniforms->light_position[2] = light_position[2];
     fragment_uniforms->light_color = light_color;
 
-    ShadingUniforms* shading_uniforms = static_cast<ShadingUniforms*>(submission.rz_uniform_buffers[2].mapped);
+    ShadingUniforms* shading_uniforms = static_cast<ShadingUniforms*>(submission.rz_uniform_buffers.at("shading_uniforms").mapped);
     shading_uniforms->specular_color.set(drawable->specular_color); // XXX drops specular_color[3]
     shading_uniforms->shininess = drawable->shininess;
 
