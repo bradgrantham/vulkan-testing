@@ -1495,9 +1495,9 @@ void CreateRayTracingPipeline()
     rt_descriptors.insert({"camera", {2, VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, sizeof(RayTracingCamera)}});
     rt_descriptors.insert({"vertex_buffer", {3, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_WHOLE_SIZE}});
     rt_descriptors.insert({"index_buffer", {4, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, VK_WHOLE_SIZE}});
-    // rt_descriptors.insert({"fragment_uniforms", {5, VK_SHADER_STAGE_FRAGMENT_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, sizeof(FragmentUniforms)}});
-    // rt_descriptors.insert({"shading_uniforms", {6, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, sizeof(ShadingUniforms)}});
-    // rt_descriptors.insert({"diffuse_texture", {7, VK_SHADER_STAGE_RAYGEN_BIT_KHR, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER}});
+    rt_descriptors.insert({"diffuse_texture", {5, VK_SHADER_STAGE_CLOSEST_HIT_BIT_KHR, VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER}});
+    // rt_descriptors.insert({"fragment_uniforms", {6, VK_SHADER_STAGE_FRAGMENT_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, sizeof(FragmentUniforms)}});
+    // rt_descriptors.insert({"shading_uniforms", {7, VK_SHADER_STAGE_VERTEX_BIT | VK_SHADER_STAGE_FRAGMENT_BIT, VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, sizeof(ShadingUniforms)}});
 
     CreatePipelineDescriptorInfo(rt_descriptors, rt_descriptor_pool, rt_descriptor_set_layout, rt_pipeline_layout);
 
@@ -1658,6 +1658,7 @@ void CreatePerSubmissionData()
         submission.rt_storage_image.Create(physical_device, device, queue, graphics_queue_family, 512, 512, chosen_color_format);
         UpdateDescriptor(device, submission.rt_descriptor_set, rt_descriptors.at("tlas"), rt_tlas);
         UpdateDescriptor(device, submission.rt_descriptor_set, rt_descriptors.at("storage_image"), submission.rt_storage_image);
+        UpdateDescriptor(device, submission.rt_descriptor_set, rt_descriptors.at("diffuse_texture"), drawable->textureSampler, drawable->textureImageView);
     }
 }
 

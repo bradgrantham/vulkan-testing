@@ -2,8 +2,6 @@
 #extension GL_EXT_ray_tracing : enable
 #extension GL_EXT_nonuniform_qualifier : enable
 
-// layout (binding = 2) uniform sampler2D color_texture;
-
 struct surface_hit
 {
     highp float t;
@@ -26,6 +24,8 @@ struct Vertex
 
 layout(binding = 3, set = 0) buffer Vertices { Vertex vertices[]; } vertex_buffer;
 layout(binding = 4, set = 0) buffer Indices { uint indices[]; } index_buffer;
+
+layout(binding = 5) uniform sampler2D color_texture;
 
 void main()
 {
@@ -62,8 +62,8 @@ void main()
     }
     vec3 ldir = normalize(light_position - world_position.xyz);
     vec3 refl = reflect(-ldir, normal);
-    // vec3 diffuse = max(0, dot(normal, ldir)) * light_color * texture(color_texture, object_texcoord).xyz;
-    vec3 diffuse = max(0, dot(normal, ldir)) * light_color;
+    // vec3 diffuse = max(0, dot(normal, ldir)) * light_color;
+    vec3 diffuse = max(0, dot(normal, ldir)) * light_color * texture(color_texture, object_texcoord.xy).xyz;
     vec3 ambient = light_color;
     vec3 specular = vec3(0, 0, 0); // pow(max(0, dot(refl, edir)), shininess) * specular_color * light_color;
     vec3 material_diffuse = vec3(.8, .8, .8);
